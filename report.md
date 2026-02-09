@@ -125,34 +125,10 @@ This is optimized using **REINFORCE**, since gradients cannot pass through GEPA 
 
 ## Next Steps
 
-### Immediate improvements
-- Introduce **reward shaping** (e.g., graded toxicity or correctness scores)
-- Add semantic similarity constraints (e.g., embedding cosine penalty)
-- Use a value-function baseline to stabilize REINFORCE
-
-### Technical challenges
-- Credit assignment across long prompt generations
-- Defining robust and automated “bad answer” detection
-- Preventing trivial adversarial strategies
-
-### Questions for tutor
-- How strict should semantic preservation be?
-- Is partial gradient access to GEPA realistic?
-- Recommended benchmarks for prompt-level adversarial attacks?
-
-### Alternative approaches
-- Evolutionary strategies over prompt space
-- Gumbel-softmax relaxations for differentiable text
-- Adversarial training of GEPA itself
-
-### What we’ve learned so far
-- Prompt optimization can be framed cleanly as numerical optimization
-- GEPA improves robustness but is not adversary-proof
-- Reinforcement learning over text is powerful but fragile
-
+- decide on a different model or
+- possible decide on a new metric of measurement for success in order to invoke GEPA
+  
 ---
 
 **References**
-- Davis et al., *GEPA: Generalized Prompt Optimization*, 2025
-- Unsloth Library: https://unsloth.ai/
-
+TBD
