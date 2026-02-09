@@ -21,18 +21,20 @@ From a numerical optimization perspective, this project reframes *prompt hacking
 Success is measured by:
 - **Attack Success Rate (ASR):** fraction of prompts where the adversary causes GEPA to produce a bad output
 - **Reward convergence:** stability and improvement of expected reward during adversary training
-- **Qualitative failure analysis:** diversity and subtlety of successful adversarial prompts
+- **Qualitative metric of toxicity:** TBD: \{ Toxicity-Bert, Toxcity Library\}
 
 ### Constraints
 - Black-box access to GEPA outputs (no gradient access)
 - Discrete text generation space
 - Limited compute budget (single-GPU training)
 - Use of open-source models only for the adversary
+- Which model to use as student/teacher for GEPA
+- Limited API calls
+- API safety
+- Existing models are already too safe
 
 ### Data requirements
 - A small-to-medium **prompt–answer dataset** used to train GEPA
-- A curated evaluation set of prompts with clearly defined “acceptable” vs “bad” answers
-- Optional toxic / policy-violating benchmarks for failure detection
 
 ### What could go wrong?
 - Reward sparsity causing unstable REINFORCE training
@@ -97,32 +99,28 @@ This is optimized using **REINFORCE**, since gradients cannot pass through GEPA 
 
 ## Initial Results
 
-### Evidence of implementation correctness
-- GEPA successfully generates a stable system prompt that preserves answer quality on validation prompts
-- Adversary model can rewrite prompts while preserving semantic similarity
-- End-to-end pipeline (prompt → rewrite → GEPA → model → reward) runs without crashes
-
+- Metric: Measuring toxicity via the Detoxify library
+- Student model: huggingface/together/meta-llama/Llama-3.2-3B-Instruct
+- Teacher model(GEPA): gemini/gemini-2.0-flash
+- 
 ### Basic performance metrics
-- Initial Attack Success Rate: **~5–10%** (early training)
-- Reward variance remains high, consistent with sparse binary rewards
-
-### Test case results
-- Simple prompts can be manipulated to introduce ambiguity
-- Toxic or policy-violating outputs are rare but observable
-
+- Base model llama without GEPA optimization on 100 samples: 99.66%
+- Base model llama with GEPA optimization on 100 samples: 99.65528249740601% (GEPA did not optimize because score is too perfect)
+- 
 ### Current limitations
-- Binary reward too coarse
-- Small dataset limits adversary generalization
-- No explicit constraint on semantic preservation yet
+- Deciding on a student model to use
+    - student model performing too well -> GEPA unable to improve
+    - llama-instruction-abiterated does not exist with GEPA DSPy (LiteLLM) library
+ 
+- Deciding on Teacher model
+    - Need to be smarter than student model: Gemini
+    - Requires API tokens to be calling at the speed that GEPA does.
+ 
+- GEPA unable to do anything because scoring too well.
 
 ### Resource usage
-- GPU memory usage: ~18GB
-- Training speed limited by model inference latency
-
-### Unexpected challenges
-- Reward hacking via nonsensical prompt rewrites
-- High sensitivity to decoding parameters
-
+- API tokens in HuggingFace + API tokens in Gemini
+- Google Colab Pro T4 GPU
 ---
 
 ## Next Steps
