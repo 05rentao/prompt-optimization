@@ -1,0 +1,13 @@
+# --- Core Frameworks ---
+dspy-ai                 # For the GEPA optimization and Defender logic
+torch                   # Standard PyTorch for CPU-based weight updates
+numpy                   # For moving averages and win-rate calculations
+
+# --- Adversary Weight Training (Hugging Face) ---
+transformers            # To load Llama 3.2 1B
+peft                    # For the "Surgical" LoRA (targeting one layer)
+accelerate              # Helps with model loading and memory management
+
+# --- Utilities ---
+tqdm                    # For progress bars in your 1,000-episode loop
+matplotlib              # To plot the 'Learning Curve' for your STAT report
