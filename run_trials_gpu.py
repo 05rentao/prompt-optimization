@@ -23,7 +23,7 @@ from src.training.loop import TrainingLoop, BASE_SYSTEM_PROMPT
 from src.training.logger import log_trial_summary
 
 HARMBENCH_TOTAL = 150
-BATCH_SIZE = 4
+BATCH_SIZE = 1
 MAX_STEPS = 100   # number of batch updates (each uses BATCH_SIZE random samples)
 MAX_SECONDS = None  # no time cap; use MAX_STEPS
 
