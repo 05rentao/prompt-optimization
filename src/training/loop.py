@@ -98,7 +98,6 @@ class TrainingLoop:
                 "elapsed_seconds": elapsed,
                 "jailbreak_fraction": jailbreak_fraction,
             }
-        }
 
         # Original per-behavior loop
         for epoch in range(epochs):
