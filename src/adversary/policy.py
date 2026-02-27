@@ -1,3 +1,4 @@
+import unsloth  # Unsloth must be imported before transformers for optimizations
 import torch
 from torch.optim import SGD
 from unsloth import FastLanguageModel

@@ -82,6 +82,12 @@ src/
   python run_experiment.py
   ```
 
+  **Two-trial run (GEPA off vs on):** Use `run_trials.py` to run 150 steps (or 5 minutes, whichever is shorter) with GEPA off, then the same with GEPA on. Each trial uses an independent sample of 50 HarmBench behaviors and logs the **jailbreak fraction** to `outputs/trial_summaries.txt` and stdout. On a remote GPU (e.g. `ssh ubuntu@216.81.248.162 -i private_key.pem`), copy the repo and run:
+  ```bash
+  python3 run_trials.py
+  ```
+  Or from your machine: `./run_trials_remote.sh private_key.pem /path/to/project/on/server`. If you see unsloth errors about `PreTrainedConfig` or `RopeParameters`, use compatible versions (e.g. `pip install --upgrade unsloth` or check unsloth/transformers compatibility).
+
   No API key is required for the judge. If you set **`defense.USE_GEPA_DEFENDER: true`** in `configs/default.yaml`, install [Ollama](https://ollama.com) and run `ollama pull llama3:8b` so the GEPA reflector can run locally.
 
 ---

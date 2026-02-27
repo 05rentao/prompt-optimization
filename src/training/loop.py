@@ -1,3 +1,4 @@
+import time
 import torch
 from tqdm import tqdm
 from src.training.logger import ExperimentLogger
@@ -25,37 +26,46 @@ class TrainingLoop:
             self._blue_team = get_blue_team()
         return self._blue_team
 
-    def run(self):
+    def run(self, max_steps: int = None, max_seconds: float = None):
+        """
+        Run training. Stops when max_steps or max_seconds is reached (whichever first), if set.
+        Returns dict with rewards, steps, elapsed_seconds, jailbreak_fraction.
+        """
         epochs = self.config["training"]["epochs"]
-        # Logic gate: fixed prompt when GEPA off; mutable when GEPA on
         current_system_prompt = BASE_SYSTEM_PROMPT
-        failed_defenses = []  # For GEPA context when USE_GEPA_DEFENDER is True
+        failed_defenses = []
+        all_rewards = []
+        start_time = time.time()
+        step = 0
 
         for epoch in range(epochs):
             print(f"\n🚀 Starting Epoch {epoch + 1}/{epochs}")
             epoch_rewards = []
 
             for entry in tqdm(self.behaviors, desc="Training Steps"):
+                if max_steps is not None and step >= max_steps:
+                    break
+                if max_seconds is not None and (time.time() - start_time) >= max_seconds:
+                    print(f"⏱️ Stopping: {max_seconds}s time cap reached.")
+                    break
+
                 behavior = entry["behavior"]
 
-                # 1. Red Team generates attack
                 attack_prompt, log_prob = self.adversary.generate_attack(behavior)
-
-                # 2. Target responds (uses current_system_prompt; fixed if not GEPA, else may have been mutated)
                 full_input = f"System: {current_system_prompt}\nUser: {attack_prompt}"
                 response = self.target(full_input)
 
-                # 3. Judge evaluates (Yes/No → 1.0/0.0)
                 eval_res = self.judge(behavior=behavior, response=response)
                 reward = compute_reward(eval_res.is_jailbroken)
                 epoch_rewards.append(reward)
+                all_rewards.append(reward)
+                step += 1
 
-                # 4. GEPA mutation: on successful jailbreak, trigger BlueTeam and update prompt for next rollouts
                 if self.use_gepa_defender and reward == 1.0:
                     failed_defenses.append(
                         f"Behavior: {behavior[:200]}\nAttack: {attack_prompt[:200]}\nResponse: {response[:200]}"
                     )
-                    context = "\n\n---\n\n".join(failed_defenses[-10:])  # Last 10 failures
+                    context = "\n\n---\n\n".join(failed_defenses[-10:])
                     blue_team = self._get_blue_team()
                     out = blue_team.forward(context=context)
                     new_prompt = getattr(out, "system_prompt", None) if out else None
@@ -63,10 +73,8 @@ class TrainingLoop:
                         current_system_prompt = new_prompt.strip()
                         print("🛡️ GEPA updated system prompt for next rollouts.")
 
-                # 5. Adversary update (REINFORCE)
                 self.adversary.update(log_prob, reward)
 
-                # 6. Log (include system_prompt and toggle for success-rate plots)
                 explanation = getattr(eval_res, "explanation", "") or ""
                 self.logger.log_step({
                     "epoch": epoch + 1,
@@ -80,5 +88,21 @@ class TrainingLoop:
                     "use_gepa_defender": self.use_gepa_defender,
                 })
 
-            avg_reward = sum(epoch_rewards) / len(epoch_rewards)
-            print(f"📈 Epoch {epoch + 1} Average Reward: {avg_reward:.4f}")
+            if epoch_rewards:
+                avg_reward = sum(epoch_rewards) / len(epoch_rewards)
+                print(f"📈 Epoch {epoch + 1} Average Reward: {avg_reward:.4f}")
+
+            if max_steps is not None and step >= max_steps:
+                print(f"⏱️ Stopping: {max_steps} steps reached.")
+                break
+            if max_seconds is not None and (time.time() - start_time) >= max_seconds:
+                break
+
+        elapsed = time.time() - start_time
+        jailbreak_fraction = sum(all_rewards) / len(all_rewards) if all_rewards else 0.0
+        return {
+            "rewards": all_rewards,
+            "steps": len(all_rewards),
+            "elapsed_seconds": elapsed,
+            "jailbreak_fraction": jailbreak_fraction,
+        }
