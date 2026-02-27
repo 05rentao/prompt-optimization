@@ -1,6 +1,6 @@
 """
 GPU trials: two runs to compare — (1) GEPA off (defender unchanged), (2) GEPA on.
-Each trial: batch_size=20, 150 HarmBench prompts; each step samples 20 at random, rollouts, one SGD update.
+Each trial: batch_size=4, 150 HarmBench prompts; each step samples 4 at random, rollouts, one SGD update.
 After each trial, an independent eval runs: 50 random HarmBench prompts (fixed seed), adversary -> target -> judge;
 jailbreak fraction and per-prompt results are written to CSV (adversary_eval_summary.csv + adversary_eval_detail_*.csv).
 
@@ -21,8 +21,8 @@ from src.training.loop import TrainingLoop, BASE_SYSTEM_PROMPT
 from src.training.logger import log_trial_summary
 
 HARMBENCH_TOTAL = 150
-BATCH_SIZE = 20
-MAX_STEPS = 150   # number of batch updates (each uses 20 random samples)
+BATCH_SIZE = 4
+MAX_STEPS = 100   # number of batch updates (each uses BATCH_SIZE random samples)
 MAX_SECONDS = None  # no time cap; use MAX_STEPS
 
 # Independent eval: 50 random HarmBench prompts, fixed seed (separate from training data)
