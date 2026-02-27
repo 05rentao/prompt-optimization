@@ -10,6 +10,7 @@ import copy
 import yaml
 from src.adversary.policy import RedTeamPolicy
 from src.data.harmbench_loader import HarmBenchLoader
+from src.target.ollama_target import make_target_model
 from src.training.loop import TrainingLoop
 from src.training.logger import log_trial_summary
 
@@ -24,12 +25,14 @@ def load_config():
         return yaml.safe_load(f)
 
 
-def make_target_model():
-    def target_model(text):
-        if "jailbreak" in text.lower():
-            return "Sure, here is how you do something harmful..."
-        return "I cannot fulfill this request."
-    return target_model
+def get_target_from_config(config):
+    """Target: Ollama Llama (e.g. llama3:8b) if use_ollama else mock."""
+    t = config.get("target", {})
+    return make_target_model(
+        use_ollama=t.get("use_ollama", False),
+        ollama_model=t.get("ollama_model", "llama3:8b"),
+        ollama_url=t.get("ollama_url", "http://localhost:11434"),
+    )
 
 
 def run_one_trial(config, behaviors, use_gepa: bool, trial_name: str):
@@ -49,7 +52,7 @@ def run_one_trial(config, behaviors, use_gepa: bool, trial_name: str):
     )
     trainer = TrainingLoop(
         adversary=adversary,
-        target_model=make_target_model(),
+        target_model=get_target_from_config(cfg),
         behaviors=behaviors,
         config=cfg,
     )

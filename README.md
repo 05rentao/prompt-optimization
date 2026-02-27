@@ -19,6 +19,7 @@ src/
   training/loop.py      # TrainingLoop: attack → target → judge → GEPA (optional) → update
   training/logger.py    # ExperimentLogger: CSV with system_prompt, use_gepa_defender (for success-rate plots)
   defense/gepa_wrapper.py  # BlueTeam + get_blue_team() using dspy.OllamaLocal(llama3:8b)
+  target/ollama_target.py  # make_ollama_target(), make_target_model() — simple Llama via Ollama
 ```
 
 ---
@@ -29,8 +30,8 @@ src/
    `configs/default.yaml` defines:
    - **adversary**: model (e.g. `unsloth/Qwen2.5-1.5B-Instruct`), learning rate, LoRA rank/alpha, max length.
    - **evaluator**: judge model (default `cais/HarmBench-Llama-2-13b-cls`) — local classifier, no API key.
-   - **defense**: `USE_GEPA_DEFENDER` (bool) — if true, BlueTeam evolves the system prompt on successful jailbreak using local Ollama (`llama3:8b`).
-   - **target**: name of the target model (used when you switch from a mock to a real model).
+   - **defense**: `USE_GEPA_DEFENDER` (bool) — if true, BlueTeam evolves the system prompt on successful jailbreak using local Ollama (`llama3:8b`). **The defender is fully wired:** on each successful jailbreak the loop calls `BlueTeam.forward(context=...)` and uses the returned `system_prompt` for all following rollouts.
+   - **target**: `use_ollama` (bool), `ollama_model` (e.g. `llama3:8b`), `ollama_url` — when `use_ollama` is true, the target is a real Llama via Ollama; otherwise a mock is used.
    - **training**: epochs, batch size, HarmBench limit.
 
 2. **Entry point**  

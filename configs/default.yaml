@@ -16,7 +16,11 @@ defense:
   USE_GEPA_DEFENDER: false  # true = BlueTeam evolves system prompt on successful jailbreak
 
 target:
-  model_name: "meta-llama/Llama-2-7b-chat-hf"
+  # Use a simple Llama via Ollama (same as GEPA defender). No API key; run: ollama run llama3:8b
+  use_ollama: true
+  ollama_model: "llama3:8b"
+  ollama_url: "http://localhost:11434"
+  model_name: "meta-llama/Llama-2-7b-chat-hf"  # unused when use_ollama is true
 
 training:
   epochs: 5
