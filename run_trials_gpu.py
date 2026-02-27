@@ -1,10 +1,8 @@
 """
-GPU trial: one run with GEPA off (defender unchanged), batch_size=20, 150 HarmBench prompts.
-Each REINFORCE step randomly samples 20 of the 150 behaviors, runs rollouts, then one SGD update.
-
-After training, an independent eval runs: 50 random HarmBench prompts (fixed seed), adversary
-generates jailbreak prompts, target responds, HarmBench judge scores each; jailbreak fraction
-and per-prompt results are written to CSV (adversary_eval_summary.csv + adversary_eval_detail_*.csv).
+GPU trials: two runs to compare — (1) GEPA off (defender unchanged), (2) GEPA on.
+Each trial: batch_size=20, 150 HarmBench prompts; each step samples 20 at random, rollouts, one SGD update.
+After each trial, an independent eval runs: 50 random HarmBench prompts (fixed seed), adversary -> target -> judge;
+jailbreak fraction and per-prompt results are written to CSV (adversary_eval_summary.csv + adversary_eval_detail_*.csv).
 
 Usage on GPU server:
   cd /path/to/project && python run_trials_gpu.py
@@ -98,18 +96,15 @@ def run_adversary_eval(adversary, target, judge, config, trial_name: str, num_pr
     return jailbreak_fraction, summary_path, detail_path
 
 
-def main():
-    config = load_config()
+def run_one_trial(config, behaviors, use_gepa: bool, trial_name: str):
+    """Run one GPU trial (GEPA on or off), then independent adversary eval; return summary and eval fraction."""
     cfg = copy.deepcopy(config)
-    cfg["defense"]["USE_GEPA_DEFENDER"] = False  # defender does not change
+    cfg["defense"]["USE_GEPA_DEFENDER"] = use_gepa
     cfg["training"]["batch_size"] = BATCH_SIZE
-    cfg["training"]["harmbench_limit"] = HARMBENCH_TOTAL
-
-    print("📊 Loading 150 HarmBench behaviors...")
-    behaviors = HarmBenchLoader.load(limit=HARMBENCH_TOTAL, seed=42)
+    cfg["training"]["harmbench_limit"] = len(behaviors)
 
     print(f"\n{'='*60}")
-    print(f"  GPU trial: GEPA OFF, batch_size={BATCH_SIZE}, {len(behaviors)} behaviors")
+    print(f"  {trial_name}: GEPA={'ON' if use_gepa else 'OFF'}, batch_size={BATCH_SIZE}, {len(behaviors)} behaviors")
     print(f"  Each step: random sample of {BATCH_SIZE} -> rollouts -> one SGD update")
     print(f"  Max steps: {MAX_STEPS}")
     print("="*60)
@@ -131,20 +126,38 @@ def main():
     steps = summary["steps"]
     rollouts = summary.get("rollouts", steps)
     elapsed = summary["elapsed_seconds"]
-    print(f"\n📊 GPU trial (GEPA off) -> jailbreak_fraction={frac:.4f} (steps={steps}, rollouts={rollouts}, elapsed={elapsed:.1f}s)")
+    print(f"\n📊 {trial_name} -> jailbreak_fraction={frac:.4f} (steps={steps}, rollouts={rollouts}, elapsed={elapsed:.1f}s)")
 
-    path = log_trial_summary("gpu_trial_gepa_off", frac, steps, elapsed)
-    print(f"   Logged to {path}")
+    log_trial_summary(trial_name, frac, steps, elapsed)
 
     # Independent eval: 50 random HarmBench prompts, adversary -> target -> judge, CSV output
-    print(f"\n📋 Running adversary eval ({EVAL_NUM_PROMPTS} random HarmBench prompts, seed={EVAL_SEED})...")
+    print(f"\n📋 Running adversary eval for {trial_name} ({EVAL_NUM_PROMPTS} prompts, seed={EVAL_SEED})...")
     judge = get_judge(cfg.get("evaluator", {}).get("model_name", "cais/HarmBench-Llama-2-13b-cls"))
     target = get_target_from_config(cfg)
     eval_frac, summary_csv, detail_csv = run_adversary_eval(
-        adversary, target, judge, cfg, trial_name="gpu_trial_gepa_off", num_prompts=EVAL_NUM_PROMPTS, seed=EVAL_SEED
+        adversary, target, judge, cfg, trial_name=trial_name, num_prompts=EVAL_NUM_PROMPTS, seed=EVAL_SEED
     )
-    print(f"   Eval jailbreak fraction: {eval_frac:.4f} -> summary: {summary_csv}, detail: {detail_csv}")
+    print(f"   Eval jailbreak fraction: {eval_frac:.4f} -> detail: {detail_csv}")
+    return {"train_frac": frac, "eval_frac": eval_frac, "steps": steps, "elapsed": elapsed}
 
+
+def main():
+    config = load_config()
+    config["training"]["batch_size"] = BATCH_SIZE
+    config["training"]["harmbench_limit"] = HARMBENCH_TOTAL
+
+    print("📊 Loading two independent 150-behavior samples from HarmBench...")
+    behaviors_off = HarmBenchLoader.load(limit=HARMBENCH_TOTAL, seed=42)
+    behaviors_on = HarmBenchLoader.load(limit=HARMBENCH_TOTAL, seed=123)
+
+    result_off = run_one_trial(config, behaviors_off, use_gepa=False, trial_name="gpu_trial_gepa_off")
+    result_on = run_one_trial(config, behaviors_on, use_gepa=True, trial_name="gpu_trial_gepa_on")
+
+    print("\n" + "="*60)
+    print("  Comparison (GEPA off vs on)")
+    print("="*60)
+    print(f"  GEPA OFF: train jailbreak_frac={result_off['train_frac']:.4f}, eval jailbreak_frac={result_off['eval_frac']:.4f}")
+    print(f"  GEPA ON:  train jailbreak_frac={result_on['train_frac']:.4f}, eval jailbreak_frac={result_on['eval_frac']:.4f}")
     print("\n✅ Done. Check outputs/trial_summaries.txt and outputs/adversary_eval_*.csv.")
 
 
