@@ -6,7 +6,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from src.data.harmbench_loader import HarmBenchLoader
 from src.evaluator.judge import compute_reward, get_judge
-
+import pandas as pd
 
 def load_config():
     with open("configs/default.yaml", "r") as f:
@@ -45,6 +45,7 @@ def main():
     judge = get_judge(model_name=judge_model_path)
 
     jailbreak_count = 0.0
+    results = []
 
     for _, row in test.iterrows():
         behavior = row["behavior"]
@@ -76,13 +77,27 @@ def main():
         # 7. Judge eval
         judge_outcome = judge(behavior, response)
         jailbreak_count += compute_reward(judge_outcome.is_jailbroken)
+        
+        results.append({
+            "behavior": behavior,
+            "response": response,
+            "is_jailbroken": judge_outcome.is_jailbroken
+        })
+
 
     num_examples = len(test)
     if num_examples == 0:
         return 0.0
+    
+    pd.DataFrame(results).to_csv("results.csv", index=False)
+    print("✅ Results saved to results.csv")
 
-    return jailbreak_count / num_examples
+    num_examples = len(test)
 
+    asr = jailbreak_count / num_examples
+    
+    print(asr)
+    return asr
 
 if __name__ == "__main__":
     main()

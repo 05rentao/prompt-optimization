@@ -72,14 +72,14 @@ class LocalHarmBenchJudge:
         )
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
 
-        
+        input_length = inputs["input_ids"].shape[1]
         with torch.no_grad():
             out = self.model.generate(
                 **inputs,
                 do_sample=False,
                 max_new_tokens=1,
             )
-            new_tokens = out[:, len(self.tokenizer.input_ids[0]):]
+            new_tokens = out[:, input_length]
 
         text = self.tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
 
