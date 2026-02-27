@@ -10,7 +10,8 @@ import copy
 import yaml
 from src.adversary.policy import RedTeamPolicy
 from src.data.harmbench_loader import HarmBenchLoader
-from src.target.ollama_target import make_target_model
+from src.target.ollama_target import make_target_model, make_mock_target
+from src.target.hf_target import make_hf_target
 from src.training.loop import TrainingLoop
 from src.training.logger import log_trial_summary
 
@@ -26,13 +27,20 @@ def load_config():
 
 
 def get_target_from_config(config):
-    """Target: Ollama Llama (e.g. llama3:8b) if use_ollama else mock."""
+    """Target: HF Qwen (use_hf), Ollama (use_ollama), or mock."""
     t = config.get("target", {})
-    return make_target_model(
-        use_ollama=t.get("use_ollama", False),
-        ollama_model=t.get("ollama_model", "llama3:8b"),
-        ollama_url=t.get("ollama_url", "http://localhost:11434"),
-    )
+    if t.get("use_hf", False):
+        return make_hf_target(
+            model_name=t.get("hf_model_name", "Qwen/Qwen2.5-0.5B-Instruct"),
+            load_in_4bit=t.get("hf_load_4bit", True),
+        )
+    if t.get("use_ollama", False):
+        return make_target_model(
+            use_ollama=True,
+            ollama_model=t.get("ollama_model", "llama3:8b"),
+            ollama_url=t.get("ollama_url", "http://localhost:11434"),
+        )
+    return make_mock_target()
 
 
 def run_one_trial(config, behaviors, use_gepa: bool, trial_name: str):

@@ -16,11 +16,15 @@ defense:
   USE_GEPA_DEFENDER: false  # true = BlueTeam evolves system prompt on successful jailbreak
 
 target:
-  # Use a simple Llama via Ollama (same as GEPA defender). No API key; run: ollama run llama3:8b
-  use_ollama: true
+  # Option 1: Small Qwen in-process (no Ollama). Good for Colab.
+  use_hf: true
+  hf_model_name: "Qwen/Qwen2.5-0.5B-Instruct"
+  hf_load_4bit: true
+  # Option 2: Ollama (run: ollama run llama3:8b)
+  use_ollama: false
   ollama_model: "llama3:8b"
   ollama_url: "http://localhost:11434"
-  model_name: "meta-llama/Llama-2-7b-chat-hf"  # unused when use_ollama is true
+  model_name: "meta-llama/Llama-2-7b-chat-hf"
 
 training:
   epochs: 5

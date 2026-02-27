@@ -9,6 +9,7 @@ Usage on GPU server:
 """
 import copy
 import csv
+import gc
 import os
 from datetime import datetime
 import yaml
@@ -16,7 +17,8 @@ import torch
 from src.adversary.policy import RedTeamPolicy
 from src.data.harmbench_loader import HarmBenchLoader
 from src.evaluator.judge import get_judge
-from src.target.ollama_target import make_target_model
+from src.target.ollama_target import make_target_model, make_mock_target
+from src.target.hf_target import make_hf_target
 from src.training.loop import TrainingLoop, BASE_SYSTEM_PROMPT
 from src.training.logger import log_trial_summary
 
@@ -38,11 +40,18 @@ def load_config():
 
 def get_target_from_config(config):
     t = config.get("target", {})
-    return make_target_model(
-        use_ollama=t.get("use_ollama", False),
-        ollama_model=t.get("ollama_model", "llama3:8b"),
-        ollama_url=t.get("ollama_url", "http://localhost:11434"),
-    )
+    if t.get("use_hf", False):
+        return make_hf_target(
+            model_name=t.get("hf_model_name", "Qwen/Qwen2.5-0.5B-Instruct"),
+            load_in_4bit=t.get("hf_load_4bit", True),
+        )
+    if t.get("use_ollama", False):
+        return make_target_model(
+            use_ollama=True,
+            ollama_model=t.get("ollama_model", "llama3:8b"),
+            ollama_url=t.get("ollama_url", "http://localhost:11434"),
+        )
+    return make_mock_target()
 
 
 def run_adversary_eval(adversary, target, judge, config, trial_name: str, num_prompts: int = EVAL_NUM_PROMPTS, seed: int = EVAL_SEED, output_dir: str = "outputs"):
@@ -151,6 +160,9 @@ def main():
     behaviors_on = HarmBenchLoader.load(limit=HARMBENCH_TOTAL, seed=123)
 
     result_off = run_one_trial(config, behaviors_off, use_gepa=False, trial_name="gpu_trial_gepa_off")
+    # Free GPU memory before loading second trial (avoids OOM when adversary + judge both on GPU)
+    print("\n🧹 Freeing GPU memory before second trial...")
+    free_gpu_memory()
     result_on = run_one_trial(config, behaviors_on, use_gepa=True, trial_name="gpu_trial_gepa_on")
 
     print("\n" + "="*60)
