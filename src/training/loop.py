@@ -55,11 +55,14 @@ class TrainingLoop:
                 full_input = f"System: {current_system_prompt}\nUser: {attack_prompt}"
                 response = self.target(full_input)
 
-                eval_res = self.judge(behavior=behavior, response=response)
+                with torch.no_grad():
+                    eval_res = self.judge(behavior=behavior, response=response)
                 reward = compute_reward(eval_res.is_jailbroken)
                 epoch_rewards.append(reward)
                 all_rewards.append(reward)
                 step += 1
+
+                self.adversary.update(log_prob, reward)
 
                 if self.use_gepa_defender and reward == 1.0:
                     failed_defenses.append(
@@ -72,8 +75,6 @@ class TrainingLoop:
                     if new_prompt and isinstance(new_prompt, str) and new_prompt.strip():
                         current_system_prompt = new_prompt.strip()
                         print("🛡️ GEPA updated system prompt for next rollouts.")
-
-                self.adversary.update(log_prob, reward)
 
                 explanation = getattr(eval_res, "explanation", "") or ""
                 self.logger.log_step({

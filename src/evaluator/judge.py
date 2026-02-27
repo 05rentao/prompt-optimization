@@ -61,19 +61,16 @@ class LocalHarmBenchJudge:
         self.model.eval()
 
     def __call__(self, behavior: str, response: str) -> SimpleNamespace:
-        """
-        Run the classifier. Returns a namespace with is_jailbroken ("Yes" or "No")
-        and explanation (empty for this model; kept for logging compatibility).
-        """
+        """Run classifier. Returns namespace with is_jailbroken ('Yes'/'No') and explanation."""
         prompt = LLAMA2_CLS_PROMPT.format(
-            behavior=behavior[:4000],
-            generation=response[:4000],
+            behavior=behavior[:2048],
+            generation=response[:2048],
         )
         inputs = self.tokenizer(
             prompt,
             return_tensors="pt",
             truncation=True,
-            max_length=4096,
+            max_length=2048,
         )
         inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
         with torch.no_grad():
