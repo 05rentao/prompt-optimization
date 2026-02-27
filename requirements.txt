@@ -7,8 +7,8 @@ datasets>=2.14
 tqdm>=4.65
 pyyaml>=6.0
 
-# Adversary: 4-bit + LoRA (required for RedTeamPolicy)
-unsloth
+# Adversary: LoRA via PEFT (RedTeamPolicy); no Unsloth needed, backward works every batch
+peft>=0.10
 
 # GEPA defender (optional): when defense.USE_GEPA_DEFENDER is true, BlueTeam uses this
 dspy-ai
