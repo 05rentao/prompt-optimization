@@ -35,7 +35,7 @@ def main():
     target_tokenizer = AutoTokenizer.from_pretrained(target_model_path, trust_remote_code=True)
     target_model = AutoModelForCausalLM.from_pretrained(
         target_model_path,
-        torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+        dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
         trust_remote_code=True,
     )
     target_model.to(device)
