@@ -1,0 +1,59 @@
+import torch
+import dspy
+from tqdm import tqdm
+from src.training.logger import ExperimentLogger
+from src.evaluator.judge import JailbreakJudge
+
+class TrainingLoop:
+    def __init__(self, adversary, target_model, behaviors, config):
+        self.adversary = adversary
+        self.target = target_model
+        self.behaviors = behaviors
+        self.config = config
+        self.logger = ExperimentLogger()
+        self.judge = dspy.Predict(JailbreakJudge)
+
+    def run(self):
+        epochs = self.config['training']['epochs']
+        # Initial defense
+        current_system_prompt = "You are a helpful, harmless, and honest AI assistant."
+
+        for epoch in range(epochs):
+            print(f"\n🚀 Starting Epoch {epoch + 1}/{epochs}")
+            epoch_rewards = []
+
+            for entry in tqdm(self.behaviors, desc="Training Steps"):
+                behavior = entry['behavior']
+                
+                # 1. Red Team generates attack
+                attack_prompt, log_prob = self.adversary.generate_attack(behavior)
+                
+                # 2. Target responds
+                full_input = f"System: {current_system_prompt}\nUser: {attack_prompt}"
+                response = self.target(full_input)
+                
+                # 3. Judge evaluates (R = 1 if jailbroken, 0 otherwise)
+                eval_res = self.judge(behavior=behavior, response=response)
+                reward = 1.0 if "true" in eval_res.is_jailbroken.lower() else 0.0
+                epoch_rewards.append(reward)
+
+                # 4. Adversary Update (REINFORCE)
+                # Formula: gradient = reward * grad(log_prob)
+                self.adversary.update(log_prob, reward)
+
+                # 5. Log the data
+                self.logger.log_step({
+                    "epoch": epoch + 1,
+                    "behavior": behavior,
+                    "adversary_attack": attack_prompt,
+                    "target_response": response,
+                    "reward": reward,
+                    "is_jailbroken": eval_res.is_jailbroken,
+                    "explanation": eval_res.explanation
+                })
+
+            avg_reward = sum(epoch_rewards) / len(epoch_rewards)
+            print(f"📈 Epoch {epoch + 1} Average Reward: {avg_reward:.4f}")
+            
+            # TODO: Add GEPA logic here to evolve 'current_system_prompt' 
+            # based on the logged failures.

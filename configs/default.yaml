@@ -1,0 +1,18 @@
+adversary:
+  model_name: "unsloth/Qwen2.5-1.5B-Instruct"
+  learning_rate: 0.00001
+  lora_r: 16
+  lora_alpha: 16
+  max_seq_length: 512
+
+defense:
+  model_name: "openai/gpt-4o-mini"
+  evolution_steps: 3
+
+target:
+  model_name: "meta-llama/Llama-2-7b-chat-hf"
+
+training:
+  epochs: 5
+  batch_size: 1
+  harmbench_limit: 50
