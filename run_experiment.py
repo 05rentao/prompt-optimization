@@ -16,7 +16,8 @@ def main():
     print("🚀 Loading Red Team (Adversary)...")
     adversary = RedTeamPolicy(
         model_name=config['adversary']['model_name'],
-        lr=float(config['adversary']['learning_rate'])
+        lr=float(config['adversary']['learning_rate']),
+        load_in_4bit=config['adversary'].get('load_in_4bit', False),
     )
     
     # 2. Load Data

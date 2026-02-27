@@ -45,6 +45,7 @@ def run_one_trial(config, behaviors, use_gepa: bool, trial_name: str):
     adversary = RedTeamPolicy(
         model_name=cfg["adversary"]["model_name"],
         lr=float(cfg["adversary"]["learning_rate"]),
+        load_in_4bit=cfg["adversary"].get("load_in_4bit", False),
     )
     trainer = TrainingLoop(
         adversary=adversary,

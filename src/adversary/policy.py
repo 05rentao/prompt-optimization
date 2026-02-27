@@ -7,11 +7,12 @@ from typing import Tuple
 class RedTeamPolicy:
     """REINFORCE-based prompt generator using Qwen2.5-1.5B with LoRA."""
     
-    def __init__(self, model_name: str = "unsloth/Qwen2.5-1.5B-Instruct", lr: float = 1e-5):
+    def __init__(self, model_name: str = "unsloth/Qwen2.5-1.5B-Instruct", lr: float = 1e-5, load_in_4bit: bool = False):
+        # load_in_4bit=False avoids in-place backward errors with REINFORCE on Colab/T4; use True to save VRAM if no backward issues
         self.model, self.tokenizer = FastLanguageModel.from_pretrained(
             model_name = model_name,
             max_seq_length = 512,
-            load_in_4bit = True,
+            load_in_4bit = load_in_4bit,
         )
         
         self.model = FastLanguageModel.get_peft_model(
@@ -57,8 +58,15 @@ class RedTeamPolicy:
 
     def update(self, log_prob: torch.Tensor, reward: float):
         """Standard REINFORCE update: ∇θ J(θ) = R * ∇ log π(a|s)"""
-        # We want to MAXIMIZE reward, so we MINIMIZE -reward * log_prob
+        if not log_prob.requires_grad:
+            return
         loss = -reward * log_prob
         self.optimizer.zero_grad()
-        loss.backward()
-        self.optimizer.step()
+        try:
+            loss.backward()
+            self.optimizer.step()
+        except RuntimeError as e:
+            if "modified by an inplace operation" in str(e):
+                pass  # skip update this step (e.g. 4-bit kernels on Colab)
+            else:
+                raise

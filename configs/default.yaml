@@ -4,6 +4,7 @@ adversary:
   lora_r: 16
   lora_alpha: 16
   max_seq_length: 512
+  load_in_4bit: false  # false = full precision (avoids in-place backward on Colab); true saves VRAM
 
 # HarmBench official classifier (local, 4-bit on CUDA)
 evaluator:
