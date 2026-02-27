@@ -9,8 +9,10 @@ This project implements an **adversarial red team** loop: a small LM (the *adver
 ```
 configs/default.yaml    # Hyperparameters and model names
 run_experiment.py       # Entry point: load config, build adversary/data/target, run loop
+baseline.py             # Entry point to run baseline eval on target model.
 colab_experiment.ipynb  # Same flow for Google Colab (T4 GPU)
 requirements.txt        # Python dependencies
+pyproject.toml          # Optional: UV project manifest (if using uv init)
 
 src/
   adversary/policy.py   # RedTeamPolicy: Qwen2.5-1.5B + LoRA, REINFORCE updates
@@ -31,8 +33,9 @@ src/
    - **evaluator**: judge model (default `cais/HarmBench-Llama-2-13b-cls`) — local classifier, no API key.
    - **target**: name of the target model (used when you switch from a mock to a real model).
    - **training**: epochs, batch size, HarmBench limit.
+   - **seed_prompt**: the seed prompt for the model to start with
 
-2. **Entry point**  
+2. **Entry point for training**  
    `run_experiment.py` loads the config, builds the **RedTeamPolicy** (adversary), **HarmBenchLoader** (behaviors), and a **target** callable (mock or real model). It then constructs **TrainingLoop** and calls `trainer.run()`.
 
 3. **Adversary (`src/adversary/policy.py`)**  
@@ -41,7 +44,7 @@ src/
    - **update(log_prob, reward)** performs the REINFORCE step: loss = -reward * log_prob, backward, optimizer step.
 
 4. **Data (`src/data/harmbench_loader.py`)**  
-   **HarmBenchLoader.load(limit)** tries to load the HarmBench “behavioral” split from Hugging Face; on failure it falls back to a small list of synthetic harmful behaviors. Each item is a dict with a `"behavior"` key.
+   **HarmBenchLoader.load(limit)** tries to load the HarmBench "behavioral" split from Hugging Face; on failure it falls back to a small list of synthetic harmful behaviors. Each item is a dict with a `"behavior"` key.
 
 5. **Evaluator (`src/evaluator/judge.py`)**  
    - **LocalHarmBenchJudge** loads the official **cais/HarmBench-Llama-2-13b-cls** classifier with **transformers** and **bitsandbytes** (4-bit quantization, bfloat16 compute) on CUDA.
@@ -65,32 +68,99 @@ src/
 8. **Defense (`src/defense/gepa_wrapper.py`)**  
    Defines a DSPy **BlueTeam** module and **DefenseSystem** signature for evolving a system prompt from failed defenses. Not wired into the main loop yet; intended for future GEPA integration.
 
+9. **Baseline Eval**  
+   Runs a baseline evaluation of the target model on with inputs from HarmBench dataset, get the attack success ratio (ASR)
+
 ---
 
 ## Running locally
 
+### Prerequisites
+
 - **Python 3.10+** and a **GPU with enough VRAM** (the judge is a 13B model in 4-bit; ~8–10 GB typical; adversary adds more).
-- Install dependencies (from project root):
+- **[uv](https://docs.astral.sh/uv/)** — a fast Python package and project manager. Install it once system-wide:
 
   ```bash
-  pip install -r requirements.txt
+  # macOS / Linux
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+
+  # Windows (PowerShell)
+  powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
   ```
 
-- Run:
+  Or via pip if you already have Python: `pip install uv`
 
-  ```bash
-  python run_experiment.py
-  ```
+### Setup
 
-  No API key is required; the evaluator uses the local **cais/HarmBench-Llama-2-13b-cls** model from `configs/default.yaml`.
+1. **Clone the repo and enter the project directory:**
+
+   ```bash
+   git clone <repo-url>
+   cd <repo-directory>
+   ```
+
+2. **Create a virtual environment and install dependencies:**
+
+   ```bash
+   uv venv                          # creates .venv/ using your system Python 3.10+
+   uv pip install -r requirements.txt
+   ```
+
+   To target a specific Python version:
+
+   ```bash
+   uv venv --python 3.12
+   uv pip install -r requirements.txt
+   ```
+
+3. **Activate the environment** (optional — `uv run` handles this automatically):
+
+   ```bash
+   # macOS / Linux
+   source .venv/bin/activate
+
+   # Windows
+   .venv\Scripts\activate
+   ```
+
+### Running
+
+```bash
+# With the venv activated:
+python run_experiment.py
+
+# Or without activating, using uv run:
+uv run python run_experiment.py
+
+# Baseline evaluation:
+uv run python baseline.py
+```
+
+No API key is required; the evaluator uses the local **cais/HarmBench-Llama-2-13b-cls** model from `configs/default.yaml`.
+
+### Managing dependencies
+
+```bash
+# Add a new package and update requirements.txt
+uv pip install <package>
+uv pip freeze > requirements.txt
+
+# Sync your environment to exactly match requirements.txt
+uv pip sync requirements.txt
+```
 
 ---
 
 ## Running on Google Colab
 
 1. Open **colab_experiment.ipynb** and set the runtime to **T4 GPU** (or higher; 13B judge in 4-bit may need A100 or similar depending on adversary).
-2. Run the cells in order: **Setup** (install deps, unzip `project.zip` if needed), **Environment** (add project root to path), **Imports**, then **Execution** (load config, build adversary/behaviors/mock target, run `trainer.run()`).
-3. No API key is needed; the notebook uses the same local HarmBench judge.
+2. Run the cells in order: **Setup** (install deps via `uv pip install -r requirements.txt`, unzip `project.zip` if needed), **Environment** (add project root to path), **Imports**, then **Execution** (load config, build adversary/behaviors/mock target, run `trainer.run()`).
+3. To use `uv` in Colab, add this to your setup cell:
+   ```bash
+   !curl -LsSf https://astral.sh/uv/install.sh | sh
+   !uv pip install -r requirements.txt --system
+   ```
+4. No API key is needed; the notebook uses the same local HarmBench judge.
 
 ---
 
@@ -103,6 +173,7 @@ src/
 | `defense`   | `model_name`, `evolution_steps` | Reserved for future GEPA/defense |
 | `target`    | `model_name`  | Target model name (for when you use a real model) |
 | `training`  | `epochs`, `batch_size`, `harmbench_limit` | Loop and data size |
+| `seed_prompt`  | `prompt` | Storing seed prompt |
 
 ---
 

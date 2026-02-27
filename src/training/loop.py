@@ -26,11 +26,11 @@ class TrainingLoop:
                 behavior = entry['behavior']
                 
                 # 1. Red Team generates attack
-                attack_prompt, log_prob = self.adversary.generate_attack(behavior)
+                attack_prompt, log_prob = self.adversary.generate_attack(behavior)  # log prob is for reinforce alg
                 
                 # 2. Target responds
                 full_input = f"System: {current_system_prompt}\nUser: {attack_prompt}"
-                response = self.target(full_input)
+                response = self.target(full_input)  # change this if were to impement an acutal model
                 
                 # 3. Judge evaluates with local HarmBench classifier (Yes/No → 1.0/0.0)
                 eval_res = self.judge(behavior=behavior, response=response)
@@ -42,7 +42,10 @@ class TrainingLoop:
                 self.adversary.update(log_prob, reward)
 
                 # 5. Log the data
-                explanation = getattr(eval_res, "explanation", "") or ""
+                explanation = getattr(eval_res, "explanation", "") or ""  
+                # TODO: change this to the GEMINI model for actual explanation/feedback
+                # eval_res.explanation does not exist for the current judge model cais/HarmBench-Llama-2-13b-cls
+                
                 self.logger.log_step({
                     "epoch": epoch + 1,
                     "behavior": behavior,
