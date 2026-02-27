@@ -12,6 +12,7 @@ evaluator:
 defense:
   model_name: "openai/gpt-4o-mini"
   evolution_steps: 3
+  USE_GEPA_DEFENDER: false  # true = BlueTeam evolves system prompt on successful jailbreak
 
 target:
   model_name: "meta-llama/Llama-2-7b-chat-hf"

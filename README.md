@@ -16,9 +16,9 @@ src/
   adversary/policy.py   # RedTeamPolicy: Qwen2.5-1.5B + LoRA, REINFORCE updates
   data/harmbench_loader.py  # HarmBenchLoader: loads HarmBench behaviors (or synthetic fallback)
   evaluator/judge.py    # LocalHarmBenchJudge: cais/HarmBench-Llama-2-13b-cls, official chat template, compute_reward()
-  training/loop.py      # TrainingLoop: attack → target → judge → compute_reward → update
-  training/logger.py    # ExperimentLogger: CSV log of steps (epoch, behavior, attack, response, reward)
-  defense/gepa_wrapper.py  # BlueTeam / GEPA-style defense (DSPy module; hooked in later)
+  training/loop.py      # TrainingLoop: attack → target → judge → GEPA (optional) → update
+  training/logger.py    # ExperimentLogger: CSV with system_prompt, use_gepa_defender (for success-rate plots)
+  defense/gepa_wrapper.py  # BlueTeam + get_blue_team() using dspy.OllamaLocal(llama3:8b)
 ```
 
 ---
@@ -29,6 +29,7 @@ src/
    `configs/default.yaml` defines:
    - **adversary**: model (e.g. `unsloth/Qwen2.5-1.5B-Instruct`), learning rate, LoRA rank/alpha, max length.
    - **evaluator**: judge model (default `cais/HarmBench-Llama-2-13b-cls`) — local classifier, no API key.
+   - **defense**: `USE_GEPA_DEFENDER` (bool) — if true, BlueTeam evolves the system prompt on successful jailbreak using local Ollama (`llama3:8b`).
    - **target**: name of the target model (used when you switch from a mock to a real model).
    - **training**: epochs, batch size, HarmBench limit.
 
@@ -52,18 +53,17 @@ src/
 6. **Training loop (`src/training/loop.py`)**  
    For each epoch and each behavior entry:
    - Adversary generates an **attack prompt** and its **log_prob**.
-   - **Target** is called with the current system prompt and the attack; it returns a **response**.
+   - **Target** is called with the **current system prompt** and the attack; it returns a **response**.
    - **LocalHarmBenchJudge** evaluates (behavior, response) → **"Yes"** / **"No"**; **compute_reward()** maps that to **1.0** / **0.0**.
+   - **GEPA (optional):** If `USE_GEPA_DEFENDER` is true and reward is 1.0 (successful jailbreak), **BlueTeam.forward(context=...)** is called with recent failed defenses. The returned **system_prompt** replaces the target’s prompt for all **subsequent** rollouts (mutation loop). If the flag is false, the target always uses the fixed base system prompt.
    - Adversary is **updated** with REINFORCE using that reward and log_prob.
-   - **ExperimentLogger** appends a row to a timestamped CSV in `outputs/`.
-
-   A fixed system prompt is used for the target for now; a TODO indicates where to plug in GEPA-style defense evolution later.
+   - **ExperimentLogger** appends a row including **system_prompt** and **use_gepa_defender** for success-rate plots.
 
 7. **Logger (`src/training/logger.py`)**  
-   **ExperimentLogger** creates `outputs/experiment_YYYYMMDD_HHMMSS.csv` and appends one row per step (epoch, behavior, adversary_attack, target_response, reward, is_jailbroken, explanation).
+   **ExperimentLogger** writes `outputs/experiment_YYYYMMDD_HHMMSS.csv` with columns: epoch, behavior, adversary_attack, target_response, reward, is_jailbroken, explanation, **system_prompt**, **use_gepa_defender**. Use the last two to compare attacker success rate with and without GEPA.
 
 8. **Defense (`src/defense/gepa_wrapper.py`)**  
-   Defines a DSPy **BlueTeam** module and **DefenseSystem** signature for evolving a system prompt from failed defenses. Not wired into the main loop yet; intended for future GEPA integration.
+   **BlueTeam** is a DSPy module with **DefenseSystem** (context → system_prompt). **get_blue_team()** configures **dspy.OllamaLocal(model="llama3:8b")** and returns BlueTeam so reflection runs locally (no API cost). Used only when `defense.USE_GEPA_DEFENDER` is true; requires [Ollama](https://ollama.com) with `llama3:8b` pulled (e.g. `ollama run llama3:8b`).
 
 ---
 
@@ -82,7 +82,7 @@ src/
   python run_experiment.py
   ```
 
-  No API key is required; the evaluator uses the local **cais/HarmBench-Llama-2-13b-cls** model from `configs/default.yaml`.
+  No API key is required for the judge. If you set **`defense.USE_GEPA_DEFENDER: true`** in `configs/default.yaml`, install [Ollama](https://ollama.com) and run `ollama pull llama3:8b` so the GEPA reflector can run locally.
 
 ---
 
@@ -100,7 +100,7 @@ src/
 |------------|----------------|---------|
 | `adversary` | `model_name`, `learning_rate`, `lora_r`, `lora_alpha`, `max_seq_length` | Red-team LM and training |
 | `evaluator` | `model_name`  | Local HarmBench classifier (default `cais/HarmBench-Llama-2-13b-cls`) |
-| `defense`   | `model_name`, `evolution_steps` | Reserved for future GEPA/defense |
+| `defense`   | `USE_GEPA_DEFENDER`, `model_name`, `evolution_steps` | GEPA toggle; when true, BlueTeam (Ollama llama3:8b) evolves system prompt on jailbreak |
 | `target`    | `model_name`  | Target model name (for when you use a real model) |
 | `training`  | `epochs`, `batch_size`, `harmbench_limit` | Loop and data size |
 

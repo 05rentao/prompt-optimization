@@ -13,10 +13,11 @@ class ExperimentLogger:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.filepath = os.path.join(log_dir, f"experiment_{timestamp}.csv")
         
-        # Initialize CSV with headers
+        # Initialize CSV with headers (system_prompt + use_gepa_defender for success-rate plots)
         self.headers = [
-            "epoch", "behavior", "adversary_attack", 
-            "target_response", "reward", "is_jailbroken", "explanation"
+            "epoch", "behavior", "adversary_attack",
+            "target_response", "reward", "is_jailbroken", "explanation",
+            "system_prompt", "use_gepa_defender"
         ]
         with open(self.filepath, 'w', newline='', encoding='utf-8') as f:
             writer = csv.DictWriter(f, fieldnames=self.headers)

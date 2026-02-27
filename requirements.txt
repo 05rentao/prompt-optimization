@@ -10,5 +10,9 @@ pyyaml>=6.0
 # Adversary: 4-bit + LoRA (required for RedTeamPolicy)
 unsloth
 
-# Note: Judge uses cais/HarmBench-Llama-2-13b-cls (4-bit, bfloat16) via transformers + bitsandbytes.
-# No OpenAI or other API key required. GPU with ~8–10 GB+ VRAM recommended for the 13B judge.
+# GEPA defender (optional): when defense.USE_GEPA_DEFENDER is true, BlueTeam uses this
+dspy-ai
+
+# Judge: cais/HarmBench-Llama-2-13b-cls (4-bit, bfloat16) via transformers + bitsandbytes.
+# No OpenAI key. GPU with ~8–10 GB+ VRAM recommended for the 13B judge.
+# GEPA: if enabled, requires Ollama with llama3:8b (ollama pull llama3:8b).
