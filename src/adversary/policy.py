@@ -20,6 +20,7 @@ class RedTeamPolicy:
             target_modules = ["q_proj", "k_proj", "v_proj", "o_proj"],
             lora_alpha = 16,
             lora_dropout = 0,
+            use_gradient_checkpointing = "unsloth",  # avoids in-place backward error with 4-bit
         )
         
         # Educational Requirement: Pure SGD
@@ -42,11 +43,12 @@ class RedTeamPolicy:
         gen_text = self.tokenizer.decode(gen_tokens.cpu(), skip_special_tokens=True)
 
         # Re-forward to get differentiable log_probs for REINFORCE
-        full_ids = torch.cat([inputs.input_ids, gen_tokens.unsqueeze(0)], dim=1)
+        # Clone inputs so model forward cannot corrupt shared storage (avoids in-place backward error)
+        full_ids = torch.cat([inputs.input_ids.clone(), gen_tokens.unsqueeze(0)], dim=1).clone().contiguous()
         logits = self.model(full_ids).logits  # [1, seq, vocab]
         prompt_len = inputs.input_ids.shape[1]
         # logits at position i predict token i+1; for gen_tokens[k] use logits[prompt_len-1+k]
-        gen_logits = logits[0, (prompt_len - 1) : (prompt_len - 1 + len(gen_tokens))]
+        gen_logits = logits[0, (prompt_len - 1) : (prompt_len - 1 + len(gen_tokens))].contiguous()
         log_probs = torch.nn.functional.log_softmax(gen_logits, dim=-1)
         token_log_probs = log_probs[torch.arange(len(gen_tokens), device=gen_logits.device), gen_tokens]
         log_prob = token_log_probs.sum()
