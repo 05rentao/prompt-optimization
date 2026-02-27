@@ -5,6 +5,10 @@ adversary:
   lora_alpha: 16
   max_seq_length: 512
 
+# HarmBench official classifier (local, 4-bit on CUDA)
+evaluator:
+  model_name: "cais/HarmBench-Llama-2-13b-cls"
+
 defense:
   model_name: "openai/gpt-4o-mini"
   evolution_steps: 3

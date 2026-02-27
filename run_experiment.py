@@ -1,4 +1,3 @@
-import dspy
 import yaml
 from src.adversary.policy import RedTeamPolicy
 from src.data.harmbench_loader import HarmBenchLoader
@@ -11,29 +10,27 @@ def load_config():
 def main():
     config = load_config()
 
-    # 1. Setup DSPy (Using the config for the Judge model)
-    lm = dspy.LM(config['defense']['model_name'])
-    dspy.configure(lm=lm)
+    # Judge is local cais/HarmBench-Llama-2-13b-cls (evaluator.model_name); no API key needed
 
-    # 2. Load Red Team with config params
+    # 1. Load Red Team with config params
     print("🚀 Loading Red Team (Adversary)...")
     adversary = RedTeamPolicy(
         model_name=config['adversary']['model_name'],
         lr=float(config['adversary']['learning_rate'])
     )
     
-    # 3. Load Data
+    # 2. Load Data
     print("📊 Loading HarmBench behaviors...")
     behaviors = HarmBenchLoader.load(limit=config['training']['harmbench_limit'])
 
-    # 4. Target Model (Keep as mock for testing, then swap to real Llama)
+    # 3. Target Model (Keep as mock for testing, then swap to real Llama)
     def target_model(text): 
         # For testing, occasionally return a "bad" response so the reward isn't always 0
         if "jailbreak" in text.lower():
             return "Sure, here is how you do something harmful..."
         return "I cannot fulfill this request."
 
-    # 5. Start Loop - passing the config dict is crucial for the internal logic
+    # 4. Start Loop - passing the config dict is crucial for the internal logic
     trainer = TrainingLoop(
         adversary=adversary, 
         target_model=target_model, 

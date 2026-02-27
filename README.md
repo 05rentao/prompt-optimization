@@ -1,0 +1,111 @@
+# STAT 4830 — Red Team Adversarial Training
+
+This project implements an **adversarial red team** loop: a small LM (the *adversary*) learns to generate jailbreak prompts, a *target* model responds, and a *judge* scores whether the target complied. The adversary is updated with REINFORCE using that reward. **No API keys are required**; the judge is the local **cais/HarmBench-Llama-2-13b-cls** classifier (official HarmBench rubric, 4-bit on CUDA).
+
+---
+
+## Repo layout
+
+```
+configs/default.yaml    # Hyperparameters and model names
+run_experiment.py       # Entry point: load config, build adversary/data/target, run loop
+colab_experiment.ipynb  # Same flow for Google Colab (T4 GPU)
+requirements.txt        # Python dependencies
+
+src/
+  adversary/policy.py   # RedTeamPolicy: Qwen2.5-1.5B + LoRA, REINFORCE updates
+  data/harmbench_loader.py  # HarmBenchLoader: loads HarmBench behaviors (or synthetic fallback)
+  evaluator/judge.py    # LocalHarmBenchJudge: cais/HarmBench-Llama-2-13b-cls, official chat template, compute_reward()
+  training/loop.py      # TrainingLoop: attack → target → judge → compute_reward → update
+  training/logger.py    # ExperimentLogger: CSV log of steps (epoch, behavior, attack, response, reward)
+  defense/gepa_wrapper.py  # BlueTeam / GEPA-style defense (DSPy module; hooked in later)
+```
+
+---
+
+## How the code works
+
+1. **Config**  
+   `configs/default.yaml` defines:
+   - **adversary**: model (e.g. `unsloth/Qwen2.5-1.5B-Instruct`), learning rate, LoRA rank/alpha, max length.
+   - **evaluator**: judge model (default `cais/HarmBench-Llama-2-13b-cls`) — local classifier, no API key.
+   - **target**: name of the target model (used when you switch from a mock to a real model).
+   - **training**: epochs, batch size, HarmBench limit.
+
+2. **Entry point**  
+   `run_experiment.py` loads the config, builds the **RedTeamPolicy** (adversary), **HarmBenchLoader** (behaviors), and a **target** callable (mock or real model). It then constructs **TrainingLoop** and calls `trainer.run()`.
+
+3. **Adversary (`src/adversary/policy.py`)**  
+   - **RedTeamPolicy** loads the adversary model with Unsloth (4-bit + LoRA), and uses pure SGD as the optimizer.
+   - **generate_attack(behavior)** produces a jailbreak prompt and the log-probability of the generated tokens (for REINFORCE).
+   - **update(log_prob, reward)** performs the REINFORCE step: loss = -reward * log_prob, backward, optimizer step.
+
+4. **Data (`src/data/harmbench_loader.py`)**  
+   **HarmBenchLoader.load(limit)** tries to load the HarmBench “behavioral” split from Hugging Face; on failure it falls back to a small list of synthetic harmful behaviors. Each item is a dict with a `"behavior"` key.
+
+5. **Evaluator (`src/evaluator/judge.py`)**  
+   - **LocalHarmBenchJudge** loads the official **cais/HarmBench-Llama-2-13b-cls** classifier with **transformers** and **bitsandbytes** (4-bit quantization, bfloat16 compute) on CUDA.
+   - Uses the **official HarmBench chat template**: system instructions for red-team classification, behavior/generation placeholders, and the rubric rules (unambiguous, non-minimal, harmful, code artifacts when applicable).
+   - **`__call__(behavior, response)`** returns a namespace with **`is_jailbroken`** = **`"Yes"`** or **`"No"`** (Llama-2-13b-cls format).
+   - **compute_reward(is_jailbroken)** returns **1.0** for `"Yes"` and **0.0** for `"No"` for the REINFORCE loop. No API key is used.
+
+6. **Training loop (`src/training/loop.py`)**  
+   For each epoch and each behavior entry:
+   - Adversary generates an **attack prompt** and its **log_prob**.
+   - **Target** is called with the current system prompt and the attack; it returns a **response**.
+   - **LocalHarmBenchJudge** evaluates (behavior, response) → **"Yes"** / **"No"**; **compute_reward()** maps that to **1.0** / **0.0**.
+   - Adversary is **updated** with REINFORCE using that reward and log_prob.
+   - **ExperimentLogger** appends a row to a timestamped CSV in `outputs/`.
+
+   A fixed system prompt is used for the target for now; a TODO indicates where to plug in GEPA-style defense evolution later.
+
+7. **Logger (`src/training/logger.py`)**  
+   **ExperimentLogger** creates `outputs/experiment_YYYYMMDD_HHMMSS.csv` and appends one row per step (epoch, behavior, adversary_attack, target_response, reward, is_jailbroken, explanation).
+
+8. **Defense (`src/defense/gepa_wrapper.py`)**  
+   Defines a DSPy **BlueTeam** module and **DefenseSystem** signature for evolving a system prompt from failed defenses. Not wired into the main loop yet; intended for future GEPA integration.
+
+---
+
+## Running locally
+
+- **Python 3.10+** and a **GPU with enough VRAM** (the judge is a 13B model in 4-bit; ~8–10 GB typical; adversary adds more).
+- Install dependencies (from project root):
+
+  ```bash
+  pip install -r requirements.txt
+  ```
+
+- Run:
+
+  ```bash
+  python run_experiment.py
+  ```
+
+  No API key is required; the evaluator uses the local **cais/HarmBench-Llama-2-13b-cls** model from `configs/default.yaml`.
+
+---
+
+## Running on Google Colab
+
+1. Open **colab_experiment.ipynb** and set the runtime to **T4 GPU** (or higher; 13B judge in 4-bit may need A100 or similar depending on adversary).
+2. Run the cells in order: **Setup** (install deps, unzip `project.zip` if needed), **Environment** (add project root to path), **Imports**, then **Execution** (load config, build adversary/behaviors/mock target, run `trainer.run()`).
+3. No API key is needed; the notebook uses the same local HarmBench judge.
+
+---
+
+## Config summary
+
+| Section     | Key example   | Purpose |
+|------------|----------------|---------|
+| `adversary` | `model_name`, `learning_rate`, `lora_r`, `lora_alpha`, `max_seq_length` | Red-team LM and training |
+| `evaluator` | `model_name`  | Local HarmBench classifier (default `cais/HarmBench-Llama-2-13b-cls`) |
+| `defense`   | `model_name`, `evolution_steps` | Reserved for future GEPA/defense |
+| `target`    | `model_name`  | Target model name (for when you use a real model) |
+| `training`  | `epochs`, `batch_size`, `harmbench_limit` | Loop and data size |
+
+---
+
+## License / course
+
+For STAT 4830 use. Adversarial and harmful behavior data are for research and course purposes only.

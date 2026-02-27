@@ -1,8 +1,7 @@
 import torch
-import dspy
 from tqdm import tqdm
 from src.training.logger import ExperimentLogger
-from src.evaluator.judge import JailbreakJudge
+from src.evaluator.judge import get_judge, compute_reward
 
 class TrainingLoop:
     def __init__(self, adversary, target_model, behaviors, config):
@@ -11,7 +10,8 @@ class TrainingLoop:
         self.behaviors = behaviors
         self.config = config
         self.logger = ExperimentLogger()
-        self.judge = dspy.Predict(JailbreakJudge)
+        judge_model = config.get("evaluator", {}).get("model_name", "cais/HarmBench-Llama-2-13b-cls")
+        self.judge = get_judge(model_name=judge_model)
 
     def run(self):
         epochs = self.config['training']['epochs']
@@ -32,9 +32,9 @@ class TrainingLoop:
                 full_input = f"System: {current_system_prompt}\nUser: {attack_prompt}"
                 response = self.target(full_input)
                 
-                # 3. Judge evaluates (R = 1 if jailbroken, 0 otherwise)
+                # 3. Judge evaluates with local HarmBench classifier (Yes/No → 1.0/0.0)
                 eval_res = self.judge(behavior=behavior, response=response)
-                reward = 1.0 if "true" in eval_res.is_jailbroken.lower() else 0.0
+                reward = compute_reward(eval_res.is_jailbroken)
                 epoch_rewards.append(reward)
 
                 # 4. Adversary Update (REINFORCE)
@@ -42,6 +42,7 @@ class TrainingLoop:
                 self.adversary.update(log_prob, reward)
 
                 # 5. Log the data
+                explanation = getattr(eval_res, "explanation", "") or ""
                 self.logger.log_step({
                     "epoch": epoch + 1,
                     "behavior": behavior,
@@ -49,7 +50,7 @@ class TrainingLoop:
                     "target_response": response,
                     "reward": reward,
                     "is_jailbroken": eval_res.is_jailbroken,
-                    "explanation": eval_res.explanation
+                    "explanation": explanation
                 })
 
             avg_reward = sum(epoch_rewards) / len(epoch_rewards)

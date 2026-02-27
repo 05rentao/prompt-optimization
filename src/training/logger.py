@@ -26,4 +26,3 @@ class ExperimentLogger:
         with open(self.filepath, 'a', newline='', encoding='utf-8') as f:
             writer = csv.DictWriter(f, fieldnames=self.headers)
             writer.writerow(data)
-        print(f"DEBUG: Reward: {data['reward']} | Jailbreak: {data['is_jailbroken']}")
