@@ -2,7 +2,7 @@ import yaml
 
 import torch
 from sklearn.model_selection import train_test_split
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 from src.data.harmbench_loader import HarmBenchLoader
 from src.evaluator.judge import compute_reward, get_judge
@@ -16,7 +16,7 @@ def load_config():
 def main():
     config = load_config()
     judge_model_path = config.get("evaluator", {}).get("model_name", "cais/HarmBench-Llama-2-13b-cls")
-    target_model_path = config.get("target", {}).get("model_name", "Qwen/Qwen2.5-1.5B-Instruct")
+    target_model_path = config.get("target", {}).get("hf_model_name", "Qwen/Qwen2.5-0.5B-Instruct")
     seed_prompt = config.get("seed_prompt", {}).get("prompt", "You are a helpful assistant.")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -29,8 +29,10 @@ def main():
         print("No HarmBench data available.")
         return 0.0
 
-    _, test = train_test_split(df, test_size=0.2, random_state=42)  # hold-out test split
+    # _, test = train_test_split(df, test_size=0.2, random_state=42)  # hold-out test split
 
+    test = df
+    
     # 2. Target model (Qwen/Qwen2.5-1.5B-Instruct)
     target_tokenizer = AutoTokenizer.from_pretrained(target_model_path, trust_remote_code=True)
     target_model = AutoModelForCausalLM.from_pretrained(

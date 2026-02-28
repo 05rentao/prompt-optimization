@@ -15,9 +15,11 @@ defense:
   evolution_steps: 3
 
 # the assistant model responding to prompts
-# use Qwen/Qwen2.5-1.5B-Instruct instead of meta-llama/Llama-2-7b-chat-hf
 target:
-  model_name: "Qwen/Qwen2.5-1.5B-Instruct"
+  # Option 1: Small Qwen in-process (no Ollama). Good for Colab.
+  use_hf: true
+  hf_model_name: "Qwen/Qwen2.5-0.5B-Instruct"
+  hf_load_4bit: false  # false = full bf16, fastest on H100
 
 training:
   epochs: 5
