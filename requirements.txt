@@ -2,7 +2,7 @@
 torch>=2.0
 transformers>=4.36
 accelerate>=0.25
-bitsandbytes>=0.41
+bitsandbytes>=0.46.1
 datasets>=2.14
 tqdm>=4.65
 pyyaml>=6.0

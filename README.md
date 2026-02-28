@@ -95,9 +95,35 @@ src/
 
 ## Running on Google Colab
 
-1. Open **colab_experiment.ipynb** and set the runtime to **T4 GPU** (or higher; 13B judge in 4-bit may need A100 or similar depending on adversary).
-2. Run the cells in order: **Setup** (install deps, unzip `project.zip` if needed), **Environment** (add project root to path), **Imports**, then **Execution** (load config, build adversary/behaviors/mock target, run `trainer.run()`).
-3. No API key is needed; the notebook uses the same local HarmBench judge.
+**GPU trials (recommended):** Use a **T4 GPU** runtime (or higher). In Colab cells:
+
+1. **Reset and clone** (use `%%bash` so the cell runs as shell, not Python):
+
+   ```bash
+   %%bash
+   cd /content
+   rm -rf prompt-optimization
+   git clone -b shiv-new_project_repo https://github.com/05rentao/prompt-optimization.git
+   cd prompt-optimization
+   ```
+
+2. **Install from requirements:**
+
+   ```bash
+   %%bash
+   cd /content/prompt-optimization
+   pip install -r requirements.txt
+   ```
+
+3. **Run GPU trials** (GEPA off, then GEPA on; in-loop eval every 10 steps; outputs in `outputs/`):
+
+   ```bash
+   %%bash
+   cd /content/prompt-optimization
+   python run_trials_gpu.py
+   ```
+
+No API key is needed; the judge is the local HarmBench classifier. For the notebook flow, open **colab_experiment.ipynb**, set T4 GPU, and run Setup → Environment → Imports → Execution.
 
 ---
 
