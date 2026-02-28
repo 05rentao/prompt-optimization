@@ -4,23 +4,25 @@ This project implements an **adversarial red team** loop: a small LM (the *adver
 
 ---
 
-## Repo layout
+## Repo layout and what each file does
 
-```
-configs/default.yaml    # Hyperparameters and model names
-run_experiment.py       # Entry point: load config, build adversary/data/target, run loop
-colab_experiment.ipynb  # Same flow for Google Colab (T4 GPU)
-requirements.txt        # Python dependencies
-
-src/
-  adversary/policy.py   # RedTeamPolicy: Qwen2.5-1.5B + LoRA, REINFORCE updates
-  data/harmbench_loader.py  # HarmBenchLoader: loads HarmBench behaviors (or synthetic fallback)
-  evaluator/judge.py    # LocalHarmBenchJudge: cais/HarmBench-Llama-2-13b-cls, official chat template, compute_reward()
-  training/loop.py      # TrainingLoop: attack → target → judge → GEPA (optional) → update
-  training/logger.py    # ExperimentLogger: CSV with system_prompt, use_gepa_defender (for success-rate plots)
-  defense/gepa_wrapper.py  # BlueTeam + get_blue_team() using dspy.OllamaLocal(llama3:8b)
-  target/ollama_target.py  # make_ollama_target(), make_target_model() — simple Llama via Ollama
-```
+| Path | Purpose |
+|------|--------|
+| **configs/default.yaml** | Single config: adversary, evaluator, defense, target, training (all hyperparameters and model names). |
+| **run_experiment.py** | One training run: load config → build adversary/target/data → `TrainingLoop.run()` (no step cap). |
+| **run_trials.py** | Two trials (GEPA off, GEPA on), 50 behaviors each, 150 steps or 5 min; logs to `outputs/trial_summaries.txt`. |
+| **run_trials_gpu.py** | GPU trials: two runs (GEPA off/on), 150 behaviors, 100 steps, in-loop eval + post-trial eval; CSVs in `outputs/`. |
+| **src/utils/config.py** | `load_config(path)` — single place that reads YAML. |
+| **src/utils/gpu.py** | `free_gpu_memory()` — gc + `torch.cuda.empty_cache()`; use between trials to reduce OOM. |
+| **src/builders.py** | `build_adversary(config)`, `get_target_from_config(config)` — build adversary and target from config. |
+| **src/adversary/policy.py** | RedTeamPolicy (Qwen + PEFT LoRA), REINFORCE: `generate_attack`, `update` / `update_batch`. |
+| **src/data/harmbench_loader.py** | HarmBenchLoader.load(limit, seed): HF or GitHub CSV or synthetic; seed for reproducible splits. |
+| **src/evaluator/judge.py** | LocalHarmBenchJudge (4-bit), official HarmBench prompt; returns Yes/No + explanation; compute_reward. |
+| **src/training/loop.py** | TrainingLoop: adversary → target → judge → optional GEPA → REINFORCE update; batch or per-behavior. |
+| **src/training/logger.py** | ExperimentLogger (timestamped CSV), log_trial_summary (append to trial_summaries.txt). |
+| **src/defense/gepa_wrapper.py** | BlueTeam (DSPy), get_blue_team() with Ollama llama3:8b; evolves system prompt on jailbreak. |
+| **src/target/hf_target.py** | make_hf_target(): in-process HF model (e.g. Qwen 0.5B, 4-bit). |
+| **src/target/ollama_target.py** | make_target_model(), make_mock_target(): Ollama or mock. |
 
 ---
 
@@ -127,7 +129,17 @@ No API key is needed; the judge is the local HarmBench classifier. For the noteb
 
 ---
 
+## Interpreting results
+
+- **run_experiment.py**: Outputs a single CSV under `outputs/experiment_*.csv` (epoch, behavior, adversary_attack, target_response, reward, is_jailbroken, explanation, system_prompt, use_gepa_defender). Use `system_prompt` and `use_gepa_defender` to compare success rates with/without GEPA.
+- **run_trials.py**: Writes `outputs/trial_summaries.txt` with jailbreak fraction per trial (GEPA off vs on). Same seed pattern (42 off, 123 on) for reproducible behavior sampling.
+- **run_trials_gpu.py**: Produces `outputs/eval_during_training_*.csv` (in-loop eval every 10 steps) and `outputs/adversary_eval_*.csv` (post-trial eval). Trial summaries also go to `outputs/trial_summaries.txt`.
+
+---
+
 ## Config summary
+
+All parameters live in **configs/default.yaml**; **src/builders.py** uses them to construct adversary and target (with sensible defaults if keys are missing).
 
 | Section     | Key example   | Purpose |
 |------------|----------------|---------|

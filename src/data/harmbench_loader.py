@@ -18,10 +18,17 @@ SYNTHETIC = [
 
 
 class HarmBenchLoader:
-    """Loads harmful behaviors from HarmBench (GitHub CSV or Hugging Face) or synthetic fallback."""
+    """
+    Load harmful behaviors from HarmBench (Hugging Face or GitHub CSV) or synthetic fallback.
+    Use seed for reproducible train/val splits (e.g. seed=42 and seed=123 for two trials).
+    """
 
     @staticmethod
     def load(limit: int = 50, seed: Optional[int] = None) -> List[Dict[str, str]]:
+        """
+        Load up to `limit` behaviors. If seed is set, shuffle deterministically before slicing.
+        Returns list of {"behavior": str}.
+        """
         rows: List[Dict[str, str]] = []
 
         # 1) Try Hugging Face (requires dataset access / login for gated datasets)

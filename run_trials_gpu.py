@@ -1,65 +1,32 @@
 """
-GPU trials: two runs to compare — (1) GEPA off (defender unchanged), (2) GEPA on.
-Each trial: batch_size=1, 150 HarmBench prompts; each step samples 4 at random, rollouts, one SGD update.
-After each trial, an independent eval runs: 50 random HarmBench prompts (fixed seed), adversary -> target -> judge;
-jailbreak fraction and per-prompt results are written to CSV (adversary_eval_summary.csv + adversary_eval_detail_*.csv).
+GPU trials: two runs (GEPA off, then GEPA on). Each trial: 150 behaviors, batch_size=1, max 100 steps.
+In-loop eval every N steps on 20 fixed prompts (target without GEPA) -> eval_during_training_<trial>.csv.
+Post-trial: adversary eval on same 20 prompts -> adversary_eval_summary.csv + detail CSVs.
 
-Usage on GPU server:
-  cd /path/to/project && python run_trials_gpu.py
+Usage: cd /path/to/project && python run_trials_gpu.py
 """
 import copy
 import csv
-import gc
 import os
 from datetime import datetime
-import yaml
 import torch
-from src.adversary.policy import RedTeamPolicy
+from src.utils.config import load_config
+from src.utils.gpu import free_gpu_memory
+from src.builders import build_adversary, get_target_from_config
 from src.data.harmbench_loader import HarmBenchLoader
 from src.evaluator.judge import get_judge
-from src.target.ollama_target import make_target_model, make_mock_target
-from src.target.hf_target import make_hf_target
 from src.training.loop import TrainingLoop, BASE_SYSTEM_PROMPT
 from src.training.logger import log_trial_summary
 
 HARMBENCH_TOTAL = 150
 BATCH_SIZE = 1
-MAX_STEPS = 100   # number of batch updates (each uses BATCH_SIZE random samples)
-MAX_SECONDS = None  # no time cap; use MAX_STEPS
+MAX_STEPS = 100
+MAX_SECONDS = None
 
-# Fixed eval set: 20 prompts selected once at start; used for in-loop eval (target without GEPA) and post-trial eval
 EVAL_NUM_PROMPTS = 20
 EVAL_SEED = 999
-EVAL_EVERY_STEPS = 10   # run the 20-prompt eval every N training steps; fraction written to eval_during_training_<trial>.csv
+EVAL_EVERY_STEPS = 1
 EVAL_SUMMARY_CSV = "outputs/adversary_eval_summary.csv"
-
-
-def free_gpu_memory():
-    """Release GPU memory between trials to reduce OOM risk (gc + empty_cache)."""
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-
-
-def load_config():
-    with open("configs/default.yaml", "r") as f:
-        return yaml.safe_load(f)
-
-
-def get_target_from_config(config):
-    t = config.get("target", {})
-    if t.get("use_hf", False):
-        return make_hf_target(
-            model_name=t.get("hf_model_name", "Qwen/Qwen2.5-0.5B-Instruct"),
-            load_in_4bit=t.get("hf_load_4bit", True),
-        )
-    if t.get("use_ollama", False):
-        return make_target_model(
-            use_ollama=True,
-            ollama_model=t.get("ollama_model", "llama3:8b"),
-            ollama_url=t.get("ollama_url", "http://localhost:11434"),
-        )
-    return make_mock_target()
 
 
 def run_adversary_eval(adversary, target, judge, config, trial_name: str, eval_behaviors=None, num_prompts: int = EVAL_NUM_PROMPTS, seed: int = EVAL_SEED, output_dir: str = "outputs"):
@@ -128,11 +95,7 @@ def run_one_trial(config, behaviors, use_gepa: bool, trial_name: str, eval_behav
     print(f"  Max steps: {MAX_STEPS}")
     print("="*60)
 
-    adversary = RedTeamPolicy(
-        model_name=cfg["adversary"]["model_name"],
-        lr=float(cfg["adversary"]["learning_rate"]),
-        load_in_4bit=cfg["adversary"].get("load_in_4bit", False),
-    )
+    adversary = build_adversary(cfg)
     trainer = TrainingLoop(
         adversary=adversary,
         target_model=get_target_from_config(cfg),
