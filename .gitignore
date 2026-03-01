@@ -1,0 +1,30 @@
+# === Secrets & credentials ===
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# === Python virtual environment ===
+.venv/
+venv/
+env/
+.python-version
+
+# === Python cache ===
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+
+# === Jupyter ===
+.ipynb_checkpoints/
+
+# === Experiment outputs (large / reproducible) ===
+results/
+gepa_run_metrics.json
+optimized_system_prompt.txt
+
+# === Cursor IDE internals ===
+.cursor/
