@@ -5,7 +5,7 @@ from sklearn.model_selection import train_test_split
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 from src.data.harmbench_loader import HarmBenchLoader
-from src.evaluator.judge import compute_reward, get_judge
+from src.evaluator.judge_vLLM import compute_reward, get_judge
 import pandas as pd
 
 def load_config():

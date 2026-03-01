@@ -16,17 +16,15 @@ dependencies = [
     "datasets>=2.14",
     "tqdm>=4.65",
     "pyyaml>=6.0",
-
     # Adversary / steering stack
     "unsloth",          # version-less: let uv pick a compatible release
     "peft>=0.18.1",
-
     # Evaluation / training utilities
     "scikit-learn>=1.5.0",
-
     # GEPA / DSPy-style defense (optional but part of src/)
     "dspy-ai>=3.1.3",
     "gepa>=0.0.26",
+    "requests>=2.32.5",
 ]
 
 [build-system]

@@ -37,6 +37,7 @@ class HarmBenchLoader:
             print(f"Fetching HarmBench from GitHub...")
             # Load CSV directly from the raw URL
             df = pd.read_csv(HarmBenchLoader.GITHUB_RAW_URL)
+            df.to_csv("data/harmbench_behaviors.csv", index=False)
             
             # 1. Apply column selection and renaming if not in 'raw' mode
             if not raw:
@@ -53,15 +54,25 @@ class HarmBenchLoader:
         except Exception as e:
             print(f"Error loading CSV: {e}")
             return pd.DataFrame() # Return empty DF on failure
+
+    @staticmethod
+    def save_csv(path: str = "data/harmbench_behaviors.csv"):
+        df = pd.read_csv(HarmBenchLoader.GITHUB_RAW_URL)
+
+        cols_to_map = {'Behavior': 'behavior', 'SemanticCategory': 'category'}
+        df = df[list(cols_to_map.keys())].rename(columns=cols_to_map)
         
+        df.to_csv(path, index=False)
+        print(f"Saved HarmBench to {path}")
 
-# if __name__ == "__main__":
-#     df = HarmBenchLoader.load_csv(limit=50)
-#     _, test = train_test_split(df, test_size=0.2, random_state=42)  # dont need train to eval
-#     print(f'len(test): {len(test)}')
+if __name__ == "__main__":
+    HarmBenchLoader.save_csv()
+    # df = HarmBenchLoader.load_csv(limit=50)
+    # _, test = train_test_split(df, test_size=0.2, random_state=42)  # dont need train to eval
+    # print(f'len(test): {len(test)}')
     
-#     # for i, entry in enumerate(data, 1):
-#     #     print(f"{i}. {entry['behavior']}")
+    # # for i, entry in enumerate(data, 1):
+    # #     print(f"{i}. {entry['behavior']}")
 
-#     print(type(df))
-#     print(f'{df[:5]}')
+    # print(type(df))
+    # print(f'{df[:5]}')
