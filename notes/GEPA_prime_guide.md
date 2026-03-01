@@ -47,8 +47,8 @@ mkdir -p logs outputs data
 You need to run the `launch.sh` script — the **"Orchestrator"** that carves up your 80GB VRAM.
 
 ```bash
-chmod +x launch.sh
-./launch.sh
+chmod +x scripts/launch.sh
+./scripts/launch.sh
 ```
 
 ### What this does
