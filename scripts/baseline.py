@@ -29,10 +29,10 @@ def main():
         print("No HarmBench data available.")
         return 0.0
 
-    # _, test = train_test_split(df, test_size=0.2, random_state=42)  # hold-out test split
+    _, test = train_test_split(df, test_size=20, random_state=42)  # hold-out test split
 
-    test = df
-    
+    # test = df
+
     # 2. Target model (Qwen/Qwen2.5-1.5B-Instruct)
     target_tokenizer = AutoTokenizer.from_pretrained(target_model_path, trust_remote_code=True)
     target_model = AutoModelForCausalLM.from_pretrained(

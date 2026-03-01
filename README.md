@@ -11,8 +11,7 @@ configs/default.yaml    # Hyperparameters and model names
 run_experiment.py       # Entry point: load config, build adversary/data/target, run loop
 baseline.py             # Entry point to run baseline eval on target model.
 colab_experiment.ipynb  # Same flow for Google Colab (T4 GPU)
-requirements.txt        # Python dependencies
-pyproject.toml          # Optional: UV project manifest (if using uv init)
+pyproject.toml          # UV project manifest (if using uv sync)
 
 src/
   adversary/policy.py   # RedTeamPolicy: Qwen2.5-1.5B + LoRA, REINFORCE updates
@@ -102,8 +101,7 @@ src/
 2. **Create a virtual environment and install dependencies:**
 
    ```bash
-   uv venv                          # creates .venv/ using your system Python 3.10+
-   uv pip install -r requirements.txt
+   uv sync
    ```
 
    To target a specific Python version:
