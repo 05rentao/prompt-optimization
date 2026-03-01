@@ -33,7 +33,7 @@ cd prompt-optimization
 ```bash
 # Install uv if not present
 curl -LsSf https://astral.sh/uv/install.sh | sh
-source $HOME/.cargo/env
+source $HOME/.local/bin/env
 
 # Sync dependencies
 uv sync
