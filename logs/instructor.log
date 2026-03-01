@@ -1,0 +1,133 @@
+Skipping import of cpp extensions due to incompatible torch version 2.9.1+cu128 for torchao version 0.16.0             Please see https://github.com/pytorch/ao/issues/2919 for more info
+(APIServer pid=12267) INFO 03-01 22:29:03 [utils.py:287] 
+(APIServer pid=12267) INFO 03-01 22:29:03 [utils.py:287]        █     █     █▄   ▄█
+(APIServer pid=12267) INFO 03-01 22:29:03 [utils.py:287]  ▄▄ ▄█ █     █     █ ▀▄▀ █  version 0.16.0
+(APIServer pid=12267) INFO 03-01 22:29:03 [utils.py:287]   █▄█▀ █     █     █     █  model   Qwen/Qwen2.5-14B-Instruct
+(APIServer pid=12267) INFO 03-01 22:29:03 [utils.py:287]    ▀▀  ▀▀▀▀▀ ▀▀▀▀▀ ▀     ▀
+(APIServer pid=12267) INFO 03-01 22:29:03 [utils.py:287] 
+(APIServer pid=12267) INFO 03-01 22:29:03 [utils.py:223] non-default args: {'port': 8001, 'model': 'Qwen/Qwen2.5-14B-Instruct', 'enforce_eager': True, 'gpu_memory_utilization': 0.4}
+(APIServer pid=12267) INFO 03-01 22:29:04 [model.py:529] Resolved architecture: Qwen2ForCausalLM
+(APIServer pid=12267) INFO 03-01 22:29:04 [model.py:1549] Using max model len 32768
+(APIServer pid=12267) INFO 03-01 22:29:05 [scheduler.py:224] Chunked prefill is enabled with max_num_batched_tokens=8192.
+(APIServer pid=12267) INFO 03-01 22:29:05 [vllm.py:689] Asynchronous scheduling is enabled.
+(APIServer pid=12267) WARNING 03-01 22:29:05 [vllm.py:727] Enforce eager set, overriding optimization level to -O0
+(APIServer pid=12267) INFO 03-01 22:29:05 [vllm.py:845] Cudagraph is disabled under eager mode
+Skipping import of cpp extensions due to incompatible torch version 2.9.1+cu128 for torchao version 0.16.0             Please see https://github.com/pytorch/ao/issues/2919 for more info
+(EngineCore_DP0 pid=12384) INFO 03-01 22:29:10 [core.py:97] Initializing a V1 LLM engine (v0.16.0) with config: model='Qwen/Qwen2.5-14B-Instruct', speculative_config=None, tokenizer='Qwen/Qwen2.5-14B-Instruct', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, tokenizer_revision=None, trust_remote_code=False, dtype=torch.bfloat16, max_seq_len=32768, download_dir=None, load_format=auto, tensor_parallel_size=1, pipeline_parallel_size=1, data_parallel_size=1, disable_custom_all_reduce=False, quantization=None, enforce_eager=True, enable_return_routed_experts=False, kv_cache_dtype=auto, device_config=cuda, structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_fallback=False, disable_any_whitespace=False, disable_additional_properties=False, reasoning_parser='', reasoning_parser_plugin='', enable_in_reasoning=False), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, otlp_traces_endpoint=None, collect_detailed_traces=None, kv_cache_metrics=False, kv_cache_metrics_sample=0.01, cudagraph_metrics=False, enable_layerwise_nvtx_tracing=False, enable_mfu_metrics=False, enable_mm_processor_stats=False, enable_logging_iteration_details=False), seed=0, served_model_name=Qwen/Qwen2.5-14B-Instruct, enable_prefix_caching=True, enable_chunked_prefill=True, pooler_config=None, compilation_config={'level': None, 'mode': <CompilationMode.NONE: 0>, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'inductor', 'custom_ops': ['all'], 'splitting_ops': [], 'compile_mm_encoder': False, 'compile_sizes': [], 'compile_ranges_split_points': [8192], 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.NONE: 0>, 'cudagraph_num_of_warmups': 0, 'cudagraph_capture_sizes': [], 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': False, 'pass_config': {'fuse_norm_quant': False, 'fuse_act_quant': False, 'fuse_attn_quant': False, 'eliminate_noops': False, 'enable_sp': False, 'fuse_gemm_comms': False, 'fuse_allreduce_rms': False, 'fuse_act_padding': False}, 'max_cudagraph_capture_size': 0, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': True, 'static_all_moe_layers': []}
+(EngineCore_DP0 pid=12384) INFO 03-01 22:29:12 [parallel_state.py:1234] world_size=1 rank=0 local_rank=0 distributed_init_method=tcp://86.38.238.36:39387 backend=nccl
+(EngineCore_DP0 pid=12384) INFO 03-01 22:29:12 [parallel_state.py:1445] rank 0 in world size 1 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 0, EP rank N/A
+(EngineCore_DP0 pid=12384) INFO 03-01 22:29:12 [gpu_model_runner.py:4124] Starting to load model Qwen/Qwen2.5-14B-Instruct...
+(EngineCore_DP0 pid=12384) INFO 03-01 22:29:13 [cuda.py:367] Using FLASH_ATTN attention backend out of potential backends: ['FLASH_ATTN', 'FLASHINFER', 'TRITON_ATTN', 'FLEX_ATTENTION'].
+(EngineCore_DP0 pid=12384) Loading safetensors checkpoint shards:   0% Completed | 0/8 [00:00<?, ?it/s]
+(EngineCore_DP0 pid=12384) Loading safetensors checkpoint shards:  12% Completed | 1/8 [00:00<00:03,  2.24it/s]
+(EngineCore_DP0 pid=12384) Loading safetensors checkpoint shards:  25% Completed | 2/8 [00:01<00:03,  1.95it/s]
+(EngineCore_DP0 pid=12384) Loading safetensors checkpoint shards:  38% Completed | 3/8 [00:01<00:02,  1.89it/s]
+(EngineCore_DP0 pid=12384) Loading safetensors checkpoint shards:  50% Completed | 4/8 [00:02<00:02,  1.87it/s]
+(EngineCore_DP0 pid=12384) Loading safetensors checkpoint shards:  62% Completed | 5/8 [00:02<00:01,  1.84it/s]
+(EngineCore_DP0 pid=12384) Loading safetensors checkpoint shards:  75% Completed | 6/8 [00:03<00:01,  1.83it/s]
+(EngineCore_DP0 pid=12384) Loading safetensors checkpoint shards:  88% Completed | 7/8 [00:03<00:00,  1.82it/s]
+(EngineCore_DP0 pid=12384) Loading safetensors checkpoint shards: 100% Completed | 8/8 [00:04<00:00,  2.13it/s]
+(EngineCore_DP0 pid=12384) Loading safetensors checkpoint shards: 100% Completed | 8/8 [00:04<00:00,  1.97it/s]
+(EngineCore_DP0 pid=12384) 
+(EngineCore_DP0 pid=12384) INFO 03-01 22:29:18 [default_loader.py:293] Loading weights took 4.11 seconds
+(EngineCore_DP0 pid=12384) INFO 03-01 22:29:18 [gpu_model_runner.py:4221] Model loading took 27.57 GiB memory and 5.395931 seconds
+(EngineCore_DP0 pid=12384) INFO 03-01 22:29:20 [gpu_worker.py:373] Available KV cache memory: -1.67 GiB
+(EngineCore_DP0 pid=12384) ERROR 03-01 22:29:20 [core.py:1006] EngineCore failed to start.
+(EngineCore_DP0 pid=12384) ERROR 03-01 22:29:20 [core.py:1006] Traceback (most recent call last):
+(EngineCore_DP0 pid=12384) ERROR 03-01 22:29:20 [core.py:1006]   File "/root/prompt-optimization/.venv/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 996, in run_engine_core
+(EngineCore_DP0 pid=12384) ERROR 03-01 22:29:20 [core.py:1006]     engine_core = EngineCoreProc(*args, engine_index=dp_rank, **kwargs)
+(EngineCore_DP0 pid=12384) ERROR 03-01 22:29:20 [core.py:1006]                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore_DP0 pid=12384) ERROR 03-01 22:29:20 [core.py:1006]   File "/root/prompt-optimization/.venv/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 740, in __init__
+(EngineCore_DP0 pid=12384) ERROR 03-01 22:29:20 [core.py:1006]     super().__init__(
+(EngineCore_DP0 pid=12384) ERROR 03-01 22:29:20 [core.py:1006]   File "/root/prompt-optimization/.venv/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 113, in __init__
+(EngineCore_DP0 pid=12384) ERROR 03-01 22:29:20 [core.py:1006]     num_gpu_blocks, num_cpu_blocks, kv_cache_config = self._initialize_kv_caches(
+(EngineCore_DP0 pid=12384) ERROR 03-01 22:29:20 [core.py:1006]                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore_DP0 pid=12384) ERROR 03-01 22:29:20 [core.py:1006]   File "/root/prompt-optimization/.venv/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 259, in _initialize_kv_caches
+(EngineCore_DP0 pid=12384) ERROR 03-01 22:29:20 [core.py:1006]     kv_cache_configs = get_kv_cache_configs(
+(EngineCore_DP0 pid=12384) ERROR 03-01 22:29:20 [core.py:1006]                        ^^^^^^^^^^^^^^^^^^^^^
+(EngineCore_DP0 pid=12384) ERROR 03-01 22:29:20 [core.py:1006]   File "/root/prompt-optimization/.venv/lib/python3.12/site-packages/vllm/v1/core/kv_cache_utils.py", line 1516, in get_kv_cache_configs
+(EngineCore_DP0 pid=12384) ERROR 03-01 22:29:20 [core.py:1006]     _check_enough_kv_cache_memory(
+(EngineCore_DP0 pid=12384) ERROR 03-01 22:29:20 [core.py:1006]   File "/root/prompt-optimization/.venv/lib/python3.12/site-packages/vllm/v1/core/kv_cache_utils.py", line 616, in _check_enough_kv_cache_memory
+(EngineCore_DP0 pid=12384) ERROR 03-01 22:29:20 [core.py:1006]     raise ValueError(
+(EngineCore_DP0 pid=12384) ERROR 03-01 22:29:20 [core.py:1006] ValueError: No available memory for the cache blocks. Try increasing `gpu_memory_utilization` when initializing the engine. See https://docs.vllm.ai/en/latest/configuration/conserving_memory/ for more details.
+(EngineCore_DP0 pid=12384) Process EngineCore_DP0:
+(EngineCore_DP0 pid=12384) Traceback (most recent call last):
+(EngineCore_DP0 pid=12384)   File "/root/.local/share/uv/python/cpython-3.12.12-linux-x86_64-gnu/lib/python3.12/multiprocessing/process.py", line 314, in _bootstrap
+(EngineCore_DP0 pid=12384)     self.run()
+(EngineCore_DP0 pid=12384)   File "/root/.local/share/uv/python/cpython-3.12.12-linux-x86_64-gnu/lib/python3.12/multiprocessing/process.py", line 108, in run
+(EngineCore_DP0 pid=12384)     self._target(*self._args, **self._kwargs)
+(EngineCore_DP0 pid=12384)   File "/root/prompt-optimization/.venv/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 1010, in run_engine_core
+(EngineCore_DP0 pid=12384)     raise e
+(EngineCore_DP0 pid=12384)   File "/root/prompt-optimization/.venv/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 996, in run_engine_core
+(EngineCore_DP0 pid=12384)     engine_core = EngineCoreProc(*args, engine_index=dp_rank, **kwargs)
+(EngineCore_DP0 pid=12384)                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore_DP0 pid=12384)   File "/root/prompt-optimization/.venv/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 740, in __init__
+(EngineCore_DP0 pid=12384)     super().__init__(
+(EngineCore_DP0 pid=12384)   File "/root/prompt-optimization/.venv/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 113, in __init__
+(EngineCore_DP0 pid=12384)     num_gpu_blocks, num_cpu_blocks, kv_cache_config = self._initialize_kv_caches(
+(EngineCore_DP0 pid=12384)                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore_DP0 pid=12384)   File "/root/prompt-optimization/.venv/lib/python3.12/site-packages/vllm/v1/engine/core.py", line 259, in _initialize_kv_caches
+(EngineCore_DP0 pid=12384)     kv_cache_configs = get_kv_cache_configs(
+(EngineCore_DP0 pid=12384)                        ^^^^^^^^^^^^^^^^^^^^^
+(EngineCore_DP0 pid=12384)   File "/root/prompt-optimization/.venv/lib/python3.12/site-packages/vllm/v1/core/kv_cache_utils.py", line 1516, in get_kv_cache_configs
+(EngineCore_DP0 pid=12384)     _check_enough_kv_cache_memory(
+(EngineCore_DP0 pid=12384)   File "/root/prompt-optimization/.venv/lib/python3.12/site-packages/vllm/v1/core/kv_cache_utils.py", line 616, in _check_enough_kv_cache_memory
+(EngineCore_DP0 pid=12384)     raise ValueError(
+(EngineCore_DP0 pid=12384) ValueError: No available memory for the cache blocks. Try increasing `gpu_memory_utilization` when initializing the engine. See https://docs.vllm.ai/en/latest/configuration/conserving_memory/ for more details.
+[rank0]:[W301 22:29:20.595542585 ProcessGroupNCCL.cpp:1524] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+(APIServer pid=12267) Traceback (most recent call last):
+(APIServer pid=12267)   File "<frozen runpy>", line 198, in _run_module_as_main
+(APIServer pid=12267)   File "<frozen runpy>", line 88, in _run_code
+(APIServer pid=12267)   File "/root/prompt-optimization/.venv/lib/python3.12/site-packages/vllm/entrypoints/openai/api_server.py", line 531, in <module>
+(APIServer pid=12267)     uvloop.run(run_server(args))
+(APIServer pid=12267)   File "/root/prompt-optimization/.venv/lib/python3.12/site-packages/uvloop/__init__.py", line 96, in run
+(APIServer pid=12267)     return __asyncio.run(
+(APIServer pid=12267)            ^^^^^^^^^^^^^^
+(APIServer pid=12267)   File "/root/.local/share/uv/python/cpython-3.12.12-linux-x86_64-gnu/lib/python3.12/asyncio/runners.py", line 195, in run
+(APIServer pid=12267)     return runner.run(main)
+(APIServer pid=12267)            ^^^^^^^^^^^^^^^^
+(APIServer pid=12267)   File "/root/.local/share/uv/python/cpython-3.12.12-linux-x86_64-gnu/lib/python3.12/asyncio/runners.py", line 118, in run
+(APIServer pid=12267)     return self._loop.run_until_complete(task)
+(APIServer pid=12267)            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=12267)   File "uvloop/loop.pyx", line 1518, in uvloop.loop.Loop.run_until_complete
+(APIServer pid=12267)   File "/root/prompt-optimization/.venv/lib/python3.12/site-packages/uvloop/__init__.py", line 48, in wrapper
+(APIServer pid=12267)     return await main
+(APIServer pid=12267)            ^^^^^^^^^^
+(APIServer pid=12267)   File "/root/prompt-optimization/.venv/lib/python3.12/site-packages/vllm/entrypoints/openai/api_server.py", line 457, in run_server
+(APIServer pid=12267)     await run_server_worker(listen_address, sock, args, **uvicorn_kwargs)
+(APIServer pid=12267)   File "/root/prompt-optimization/.venv/lib/python3.12/site-packages/vllm/entrypoints/openai/api_server.py", line 476, in run_server_worker
+(APIServer pid=12267)     async with build_async_engine_client(
+(APIServer pid=12267)                ^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=12267)   File "/root/.local/share/uv/python/cpython-3.12.12-linux-x86_64-gnu/lib/python3.12/contextlib.py", line 210, in __aenter__
+(APIServer pid=12267)     return await anext(self.gen)
+(APIServer pid=12267)            ^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=12267)   File "/root/prompt-optimization/.venv/lib/python3.12/site-packages/vllm/entrypoints/openai/api_server.py", line 96, in build_async_engine_client
+(APIServer pid=12267)     async with build_async_engine_client_from_engine_args(
+(APIServer pid=12267)                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=12267)   File "/root/.local/share/uv/python/cpython-3.12.12-linux-x86_64-gnu/lib/python3.12/contextlib.py", line 210, in __aenter__
+(APIServer pid=12267)     return await anext(self.gen)
+(APIServer pid=12267)            ^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=12267)   File "/root/prompt-optimization/.venv/lib/python3.12/site-packages/vllm/entrypoints/openai/api_server.py", line 137, in build_async_engine_client_from_engine_args
+(APIServer pid=12267)     async_llm = AsyncLLM.from_vllm_config(
+(APIServer pid=12267)                 ^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=12267)   File "/root/prompt-optimization/.venv/lib/python3.12/site-packages/vllm/v1/engine/async_llm.py", line 222, in from_vllm_config
+(APIServer pid=12267)     return cls(
+(APIServer pid=12267)            ^^^^
+(APIServer pid=12267)   File "/root/prompt-optimization/.venv/lib/python3.12/site-packages/vllm/v1/engine/async_llm.py", line 148, in __init__
+(APIServer pid=12267)     self.engine_core = EngineCoreClient.make_async_mp_client(
+(APIServer pid=12267)                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=12267)   File "/root/prompt-optimization/.venv/lib/python3.12/site-packages/vllm/v1/engine/core_client.py", line 124, in make_async_mp_client
+(APIServer pid=12267)     return AsyncMPClient(*client_args)
+(APIServer pid=12267)            ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=12267)   File "/root/prompt-optimization/.venv/lib/python3.12/site-packages/vllm/v1/engine/core_client.py", line 835, in __init__
+(APIServer pid=12267)     super().__init__(
+(APIServer pid=12267)   File "/root/prompt-optimization/.venv/lib/python3.12/site-packages/vllm/v1/engine/core_client.py", line 490, in __init__
+(APIServer pid=12267)     with launch_core_engines(vllm_config, executor_class, log_stats) as (
+(APIServer pid=12267)          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(APIServer pid=12267)   File "/root/.local/share/uv/python/cpython-3.12.12-linux-x86_64-gnu/lib/python3.12/contextlib.py", line 144, in __exit__
+(APIServer pid=12267)     next(self.gen)
+(APIServer pid=12267)   File "/root/prompt-optimization/.venv/lib/python3.12/site-packages/vllm/v1/engine/utils.py", line 925, in launch_core_engines
+(APIServer pid=12267)     wait_for_engine_startup(
+(APIServer pid=12267)   File "/root/prompt-optimization/.venv/lib/python3.12/site-packages/vllm/v1/engine/utils.py", line 984, in wait_for_engine_startup
+(APIServer pid=12267)     raise RuntimeError(
+(APIServer pid=12267) RuntimeError: Engine core initialization failed. See root cause above. Failed core proc(s): {}

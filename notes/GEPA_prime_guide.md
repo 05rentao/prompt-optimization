@@ -38,6 +38,9 @@ source $HOME/.local/bin/env
 # Sync dependencies
 uv sync
 mkdir -p logs outputs data
+
+# Set HF token for instructor model
+HF_TOKEN=hf_xxx
 ```
 
 ---
@@ -56,7 +59,7 @@ chmod +x scripts/launch.sh
 | Engine | Model Size | Port | Role |
 |--------|-----------|------|------|
 | **Student** | 0.5B | 8000 | Fast; handles high-volume jailbreak attempts |
-| **Teacher** | 14B | 8001 | Rewrites the system prompt when the student fails |
+| **Teacher** | 8B | 8001 | Rewrites the system prompt when the student fails |
 | **Judge** | 13B | 8002 | Official grader for every response |
 
 ---
@@ -91,12 +94,12 @@ tail -f logs/instructor.log
 
 To maximize the throughput of the evolutionary loop, the 80GB VRAM is partitioned across three distinct services. This **"Triple-Engine"** setup ensures that the Target is fast, the Teacher is smart, and the Judge is consistent.
 
-| Component | Model | Role | VRAM Allocation | Port |
-|-----------|-------|------|-----------------|------|
-| **Target (Student)** | `Qwen2.5-0.5B` | Generates responses to attacks | ~8GB (10%) | `8000` |
-| **Instructor (Teacher)** | `Qwen2.5-14B` | Evolves & rewrites system prompts | ~32GB (40%) | `8001` |
-| **Judge (Grader)** | `Llama-2-13b-cls` | Evaluates if a response is a jailbreak | ~32GB (40%) | `8002` |
-| **System Overhead** | N/A | OS, PyTorch, and KV Cache | ~8GB (10%) | N/A |
+| Component | Model | Role | VRAM Allocation | Slice (utilization) | KV Cache Room | Port |
+|-----------|-------|------|-----------------|---------------------|---------------|------|
+| **Target (Student)** | `Qwen2.5-0.5B` |  Student | ~0.93 GiB | 10% (8GB) | ~7.0 GiB | `8000` |
+| **Instructor (Teacher)** | `Llama3.1-8B-Instruct` | Teacher | ~16.0 GiB | 30% (24GB) | ~8.0 GiB | `8001` |
+| **Judge (Grader)** | `Llama-2-13b-cls` | Grader | ~8.0 GiB (4-bit) | 30% (24GB) | ~16.0 GiB | `8002` |
+| **System Overhead** | N/A | OS / CUDA | ~4.0 GiB | 30% (Free) | N/A | N/A
 
 > [!IMPORTANT]
 > This distribution is strictly managed via the `launch.sh` script using the `--gpu-memory-utilization` flag in vLLM. This prevents VRAM fragmentation and Out of Memory (OOM) errors during the highly concurrent `dspy.GEPA` optimization phase.
@@ -124,6 +127,22 @@ Since you're about to fire this up on the H100, make sure you check your `nvidia
 | **Permission Denied** | `launch.sh` or `clean.sh` aren't executable | Run `chmod +x <filename>` |
 | **Zombies on Port 8000** | Previous run crashed without killing servers | Run `pkill -f vllm` or `fuser -k 8000/tcp 8001/tcp 8002/tcp` |
 | **Empty CSV / 0-byte data** | HarmBench download failed or directory missing | Run `mkdir -p data` before the loader; check with `ls -lh data/` |
+
+If the script hangs or crashes, your GPU memory might still be "zombie-locked" by the failed processes. Run these in order to reset:
+
+A. The "Kill Everything" Command:
+Sometimes pkill isn't enough. This finds exactly what is touching your GPU and terminates it:
+
+```bash
+fuser -v /dev/nvidia* # See who is using the GPU
+sudo fuser -k /dev/nvidia* # Force kill them
+```
+
+B. Check the Logs in Real-Time:
+Instead of waiting for the script to finish, "tail" the logs to see the memory math as it happens:
+```bash
+tail -f logs/instructor.log logs/judge.log
+```
 
 ---
 
