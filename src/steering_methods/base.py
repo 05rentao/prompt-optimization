@@ -21,6 +21,5 @@ class SteeringMethod(ABC):  # Abstract base class for steering methods
         if self.handle is not None:
             self.handle.remove()
             self.handle = None
-            print("Hook removed successfully.")
-        else:
-            print("No active hook to remove.")
+            return True
+        return False

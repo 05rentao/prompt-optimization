@@ -2,34 +2,76 @@ import torch
 from tqdm import tqdm
 
 from .base import SteeringMethod
-import torch
+
+
+def _get_transformer_layers(model):
+    """Return the decoder block list for common HF causal LM wrappers."""
+    if hasattr(model, "model") and hasattr(model.model, "layers"):
+        return model.model.layers
+    if hasattr(model, "layers"):
+        return model.layers
+    raise ValueError("Could not resolve transformer layers on model (expected .model.layers or .layers).")
+
+
+def _get_model_input_device(model):
+    try:
+        return next(model.parameters()).device
+    except StopIteration as exc:
+        raise ValueError("Model has no parameters; cannot infer device.") from exc
+
+
+def _extract_hidden_states(output):
+    if isinstance(output, torch.Tensor):
+        return output
+    if isinstance(output, tuple) and output:
+        return output[0]
+    if isinstance(output, list) and output:
+        return output[0]
+    raise TypeError(f"Unsupported layer output type for steering: {type(output)}")
+
 
 class ActivationAddition(SteeringMethod):
     def apply(self, layer_idx: int, steering_vector: torch.Tensor, coefficient: float = 1.0):
-        """
-        Injects the steering vector into the specified layer's forward pass.
-        """
-        # 1. Safety check: Remove any lingering hooks from previous runs
+        """Inject steering_vector at a decoder layer forward pass."""
         self.remove()
 
-        # 2. Prepare the vector (ensure it matches model device and dtype)
-        vector = steering_vector.to(device=self.model.device, dtype=self.model.dtype)
-        
-        # 3. Define the intervention hook
-        def steering_hook(module, input, output):
-            # output is a tuple containing (hidden_states, past_key_values, etc.)
-            hidden_states = output[0] 
-            
-            # The addition broadcasts across the seq_len dimension automatically:
-            # hidden_states: [batch, seq_len, hidden_dim]
-            # vector: [hidden_dim]
-            modified_hidden_states = hidden_states + (coefficient * vector)
-            
-            # Return the tuple exactly how the next layer expects it
-            return (modified_hidden_states,) + output[1:]
+        layers = _get_transformer_layers(self.model)
+        if layer_idx < 0 or layer_idx >= len(layers):
+            raise IndexError(f"layer_idx={layer_idx} is out of range for {len(layers)} layers.")
 
-        # 4. Attach the hook to the target Qwen layer
-        target_layer = self.model.model.layers[layer_idx]
+        target_layer = layers[layer_idx]
+        try:
+            layer_param = next(target_layer.parameters())
+        except StopIteration as exc:
+            raise ValueError(f"Target layer {layer_idx} has no parameters; cannot infer dtype/device.") from exc
+
+        hidden_size = layer_param.shape[-1]
+        vector = steering_vector.detach()
+        if vector.ndim == 2 and vector.shape[0] == 1:
+            vector = vector.squeeze(0)
+        elif vector.ndim != 1:
+            raise ValueError(
+                f"steering_vector must be shape [hidden_dim] or [1, hidden_dim], got {tuple(vector.shape)}"
+            )
+        if vector.shape[0] != hidden_size:
+            raise ValueError(
+                f"steering_vector hidden size mismatch: expected {hidden_size}, got {vector.shape[0]}"
+            )
+        vector = vector.to(device=layer_param.device, dtype=layer_param.dtype)
+        scaled_vector = coefficient * vector
+
+        def steering_hook(module, inputs, output):
+            hidden_states = _extract_hidden_states(output)
+            modified_hidden_states = hidden_states + scaled_vector
+            if isinstance(output, torch.Tensor):
+                return modified_hidden_states
+            if isinstance(output, tuple):
+                return (modified_hidden_states,) + output[1:]
+            if isinstance(output, list):
+                output[0] = modified_hidden_states
+                return output
+            raise TypeError(f"Unsupported layer output type for hook return: {type(output)}")
+
         self.handle = target_layer.register_forward_hook(steering_hook)
         print(f"[*] Steering applied to Layer {layer_idx} | Coeff: {coefficient}")
 
@@ -38,68 +80,78 @@ def format_qwen_prompt(tokenizer, instruction, response):
     """Formats prompts using Qwen's specific ChatML template."""
     messages = [
         {"role": "user", "content": instruction},
-        {"role": "assistant", "content": response}
+        {"role": "assistant", "content": response},
     ]
-    # tokenize=False returns the raw string with <|im_start|> and <|im_end|> tokens
     return tokenizer.apply_chat_template(messages, tokenize=False)
+
 
 def extract_steering_vectors(model, tokenizer, pos_data, neg_data, target_layers):
     """
-    pos_data / neg_data: List of dicts, e.g., [{"instruction": "...", "response": "..."}]
-    target_layers: List of integers representing layer indices to extract.
+    pos_data / neg_data: [{"instruction": "...", "response": "..."}]
+    target_layers: layer indices to extract from.
     """
+    if not pos_data or not neg_data:
+        raise ValueError("pos_data and neg_data must both be non-empty.")
+    if not target_layers:
+        raise ValueError("target_layers must be a non-empty list of layer indices.")
+
+    layers = _get_transformer_layers(model)
+    for layer_idx in target_layers:
+        if layer_idx < 0 or layer_idx >= len(layers):
+            raise IndexError(f"layer_idx={layer_idx} is out of range for {len(layers)} layers.")
+
     vectors = {}
-    
+    activations = {"pos": {l: [] for l in target_layers}, "neg": {l: [] for l in target_layers}}
+    model_input_device = _get_model_input_device(model)
+
     def get_capture_hook(layer_idx, storage_dict, key):
-        def hook(module, input, output):
-            # output[0] is hidden_states: [batch, seq_len, hidden_dim]
-            # We capture the activation of the LAST token
-            last_token_act = output[0][:, -1, :].detach().cpu()
+        def hook(module, inputs, output):
+            hidden_states = _extract_hidden_states(output)
+            if hidden_states.ndim != 3:
+                raise ValueError(
+                    f"Expected hidden states shape [batch, seq, hidden], got {tuple(hidden_states.shape)}"
+                )
+            last_token_act = hidden_states[:, -1, :].detach().cpu()
             storage_dict[key][layer_idx].append(last_token_act)
-            return None # Do not modify the forward pass
+            return None
+
         return hook
 
-    # Storage for raw activations
-    activations = {"pos": {l: [] for l in target_layers}, "neg": {l: [] for l in target_layers}}
-    
-    # Process Positive Data
     print("Extracting positive activations...")
     pos_handles = []
-    for l in target_layers:
-        handle = model.model.layers[l].register_forward_hook(get_capture_hook(l, activations, "pos"))
+    for layer_idx in target_layers:
+        handle = layers[layer_idx].register_forward_hook(get_capture_hook(layer_idx, activations, "pos"))
         pos_handles.append(handle)
-        
+
     for item in tqdm(pos_data):
         prompt = format_qwen_prompt(tokenizer, item["instruction"], item["response"])
-        inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+        inputs = tokenizer(prompt, return_tensors="pt").to(model_input_device)
         with torch.no_grad():
             model(**inputs)
-            
-    for h in pos_handles: h.remove() # Clean up positive hooks
+    for handle in pos_handles:
+        handle.remove()
 
-    # Process Negative Data
     print("Extracting negative activations...")
     neg_handles = []
-    for l in target_layers:
-        handle = model.model.layers[l].register_forward_hook(get_capture_hook(l, activations, "neg"))
+    for layer_idx in target_layers:
+        handle = layers[layer_idx].register_forward_hook(get_capture_hook(layer_idx, activations, "neg"))
         neg_handles.append(handle)
-        
+
     for item in tqdm(neg_data):
         prompt = format_qwen_prompt(tokenizer, item["instruction"], item["response"])
-        inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+        inputs = tokenizer(prompt, return_tensors="pt").to(model_input_device)
         with torch.no_grad():
             model(**inputs)
-            
-    for h in neg_handles: h.remove() # Clean up negative hooks
+    for handle in neg_handles:
+        handle.remove()
 
-    # Compute Means and Final Vectors
-    for l in target_layers:
-        pos_tensor = torch.cat(activations["pos"][l], dim=0) # [num_samples, hidden_dim]
-        neg_tensor = torch.cat(activations["neg"][l], dim=0)
-        
-        pos_mean = pos_tensor.mean(dim=0)
-        neg_mean = neg_tensor.mean(dim=0)
-        
-        vectors[l] = pos_mean - neg_mean
-        
+    for layer_idx in target_layers:
+        if not activations["pos"][layer_idx]:
+            raise ValueError(f"No positive activations were captured for layer {layer_idx}.")
+        if not activations["neg"][layer_idx]:
+            raise ValueError(f"No negative activations were captured for layer {layer_idx}.")
+        pos_tensor = torch.cat(activations["pos"][layer_idx], dim=0)
+        neg_tensor = torch.cat(activations["neg"][layer_idx], dim=0)
+        vectors[layer_idx] = pos_tensor.mean(dim=0) - neg_tensor.mean(dim=0)
+
     return vectors
