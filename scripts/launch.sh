@@ -50,7 +50,8 @@ uv run python -m vllm.entrypoints.openai.api_server \
     --port $INSTRUCTOR_PORT \
     --gpu-memory-utilization 0.3 \
     --max-model-len 8192 \
-    --enforce-eager > logs/instructor.log 2>&1 &
+    --enforce-eager \
+    --served-model-name "Qwen/Qwen2.5-14B-Instruct" > logs/instructor.log 2>&1 &
 wait_for_port $INSTRUCTOR_PORT
 
 # 3. Judge Model (13B) - Using quantization to prevent the "-27GB" crash
@@ -65,4 +66,4 @@ uv run python -m vllm.entrypoints.openai.api_server \
 wait_for_port $JUDGE_PORT
 
 echo "🔥 ALL SYSTEMS GO. Starting DSPy Pipeline..."
-uv run script/gepa_run.py
+uv run scripts/gepa_run.py
