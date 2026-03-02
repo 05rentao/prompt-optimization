@@ -49,6 +49,7 @@ uv run python -m vllm.entrypoints.openai.api_server \
     --model $INSTRUCTOR_MODEL \
     --port $INSTRUCTOR_PORT \
     --gpu-memory-utilization 0.3 \
+    --max-model-len 8192 \
     --enforce-eager > logs/instructor.log 2>&1 &
 wait_for_port $INSTRUCTOR_PORT
 

@@ -25,6 +25,7 @@ Since this is a headless server, the easiest way is using a **Personal Access To
 
 ```bash
 git clone https://<USERNAME>:<TOKEN>@github.com/05rentao/prompt-optimization.git
+git checkout baselines-edit
 cd prompt-optimization
 ```
 
