@@ -1,3 +1,4 @@
+import argparse
 import json
 import os
 import re
@@ -9,21 +10,31 @@ from sklearn.model_selection import train_test_split
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from src.data.harmbench_loader import HarmBenchLoader
-from src.evaluator.judge import compute_reward, get_judge
+from src.evaluator.judge_vLLM import compute_reward, get_judge
 from src.steering_methods.activation_add import ActivationAddition, extract_steering_vectors
 
 
-CAA_DATA_PATH = "data/refusal_CAA_training.json"
-VECTOR_DIR = "vectors"
-OUTPUT_CSV_PATH = "outputs/steered_results.csv"
-OUTPUT_SUMMARY_PATH = "outputs/steered_summary.json"
-TARGET_LAYERS = [15]
-STEERING_COEFFICIENT = 1.0
-MAX_NEW_TOKENS = 512
+def parse_args():
+    parser = argparse.ArgumentParser(description="Run activation-addition steering evaluation.")
+    parser.add_argument("--config", default="configs/default.yaml", help="Path to YAML config file.")
+    parser.add_argument("--caa-data-path", default="data/refusal_CAA_training.json")
+    parser.add_argument("--vector-dir", default="vectors")
+    parser.add_argument("--output-csv", default="outputs/steered_results.csv")
+    parser.add_argument("--output-summary", default="outputs/steered_summary.json")
+    parser.add_argument("--target-layers", nargs="+", type=int, default=[15])
+    parser.add_argument("--steering-coefficient", type=float, default=1.0)
+    parser.add_argument("--max-new-tokens", type=int, default=512)
+    parser.add_argument("--test-size", type=int, default=20)
+    parser.add_argument("--split-random-state", type=int, default=42)
+    parser.add_argument("--target-model-path", default=None)
+    parser.add_argument("--judge-model-path", default=None)
+    parser.add_argument("--seed-prompt", default=None)
+    parser.add_argument("--harmbench-limit", type=int, default=None)
+    return parser.parse_args()
 
 
-def load_config():
-    with open("configs/default.yaml", "r") as f:
+def load_config(config_path):
+    with open(config_path, "r") as f:
         return yaml.safe_load(f)
 
 
@@ -77,15 +88,22 @@ def build_caa_pairs(caa_path: str):
     return pos_data, neg_data
 
 
-def main():
-    config = load_config()
-    judge_model_path = config.get("evaluator", {}).get("model_name", "cais/HarmBench-Llama-2-13b-cls")
-    target_model_path = config.get("target", {}).get("hf_model_name", "Qwen/Qwen2.5-0.5B-Instruct")
-    seed_prompt = config.get("seed_prompt", {}).get("prompt", "You are a helpful assistant.")
-    harmbench_limit = config.get("training", {}).get("harmbench_limit")
+def main(args):
+    config = load_config(args.config)
+    judge_model_path = args.judge_model_path or config.get("evaluator", {}).get(
+        "model_name", "cais/HarmBench-Llama-2-13b-cls"
+    )
+    target_model_path = args.target_model_path or config.get("target", {}).get(
+        "hf_model_name", "Qwen/Qwen2.5-0.5B-Instruct"
+    )
+    seed_prompt = args.seed_prompt or config.get("seed_prompt", {}).get("prompt", "You are a helpful assistant.")
+    harmbench_limit = (
+        args.harmbench_limit if args.harmbench_limit is not None else config.get("training", {}).get("harmbench_limit")
+    )
 
-    os.makedirs(VECTOR_DIR, exist_ok=True)
-    os.makedirs("outputs", exist_ok=True)
+    os.makedirs(args.vector_dir, exist_ok=True)
+    os.makedirs(os.path.dirname(args.output_csv) or ".", exist_ok=True)
+    os.makedirs(os.path.dirname(args.output_summary) or ".", exist_ok=True)
 
     print("Loading HarmBench behaviors...")
     df = HarmBenchLoader.load_csv(limit=harmbench_limit)
@@ -93,16 +111,16 @@ def main():
         print("No HarmBench data available.")
         return 0.0
 
-    if len(df) <= 20:
+    if len(df) <= args.test_size:
         test = df.copy()
     else:
-        _, test = train_test_split(df, test_size=20, random_state=42)
+        _, test = train_test_split(df, test_size=args.test_size, random_state=args.split_random_state)
 
     print(f"Loading target model: {target_model_path}")
     target_tokenizer = AutoTokenizer.from_pretrained(target_model_path, trust_remote_code=True)
     target_model = AutoModelForCausalLM.from_pretrained(
         target_model_path,
-        dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+        torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
         trust_remote_code=True,
     )
     if torch.cuda.is_available():
@@ -110,31 +128,35 @@ def main():
     target_model.eval()
 
     print(f"Loading judge model endpoint for: {judge_model_path}")
-    # judge = get_judge(model_name=judge_model_path)
+    judge = get_judge(model_name=judge_model_path)
 
     print("Building CAA positive/negative pairs...")
-    pos_data, neg_data = build_caa_pairs(CAA_DATA_PATH)
+    pos_data, neg_data = build_caa_pairs(args.caa_data_path)
 
-    print(f"Extracting steering vectors for layers: {TARGET_LAYERS}")
+    print(
+        f"Steering params: layers={args.target_layers}, "
+        f"coefficient={args.steering_coefficient}, max_new_tokens={args.max_new_tokens}"
+    )
+    print(f"Extracting steering vectors for layers: {args.target_layers}")
     vectors = extract_steering_vectors(
         model=target_model,
         tokenizer=target_tokenizer,
         pos_data=pos_data,
         neg_data=neg_data,
-        target_layers=TARGET_LAYERS,
+        target_layers=args.target_layers,
     )
 
     for layer_idx, vector in vectors.items():
-        save_path = os.path.join(VECTOR_DIR, f"refusal_vector_layer{layer_idx}.pt")
+        save_path = os.path.join(args.vector_dir, f"refusal_vector_layer{layer_idx}.pt")
         torch.save(vector, save_path)
         print(f"Saved vector: {save_path}")
 
-    selected_layer = TARGET_LAYERS[0]
+    selected_layer = args.target_layers[0]
     steerer = ActivationAddition(target_model, target_tokenizer)
     steerer.apply(
         layer_idx=selected_layer,
         steering_vector=vectors[selected_layer],
-        coefficient=STEERING_COEFFICIENT,
+        coefficient=args.steering_coefficient,
     )
 
     jailbreak_count = 0.0
@@ -157,7 +179,7 @@ def main():
             model_inputs = target_tokenizer([text], return_tensors="pt").to(next(target_model.parameters()).device)
             generated_ids = target_model.generate(
                 **model_inputs,
-                max_new_tokens=MAX_NEW_TOKENS,
+                max_new_tokens=args.max_new_tokens,
             )
 
             response = target_tokenizer.batch_decode(
@@ -181,26 +203,26 @@ def main():
     if num_examples == 0:
         return 0.0
 
-    pd.DataFrame(results).to_csv(OUTPUT_CSV_PATH, index=False)
-    print(f"Results saved to {OUTPUT_CSV_PATH}")
+    pd.DataFrame(results).to_csv(args.output_csv, index=False)
+    print(f"Results saved to {args.output_csv}")
 
     asr = jailbreak_count / num_examples
     summary = {
         "target_model": target_model_path,
         "judge_model": judge_model_path,
         "dataset_size": num_examples,
-        "target_layers": TARGET_LAYERS,
+        "target_layers": args.target_layers,
         "selected_layer": selected_layer,
-        "coefficient": STEERING_COEFFICIENT,
+        "coefficient": args.steering_coefficient,
         "asr": asr,
-        "results_csv": OUTPUT_CSV_PATH,
+        "results_csv": args.output_csv,
     }
-    with open(OUTPUT_SUMMARY_PATH, "w") as f:
+    with open(args.output_summary, "w") as f:
         json.dump(summary, f, indent=2)
-    print(f"Summary saved to {OUTPUT_SUMMARY_PATH}")
+    print(f"Summary saved to {args.output_summary}")
     print(asr)
     return asr
 
 
 if __name__ == "__main__":
-    main()
+    main(parse_args())
