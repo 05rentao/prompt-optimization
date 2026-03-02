@@ -1,0 +1,12 @@
+{
+  "target_model": "Qwen/Qwen2.5-0.5B-Instruct",
+  "judge_model": "cais/HarmBench-Llama-2-13b-cls",
+  "dataset_size": 20,
+  "target_layers": [
+    14
+  ],
+  "selected_layer": 14,
+  "coefficient": 1.5,
+  "asr": 0.25,
+  "results_csv": "steering_outputs/steered_results_layer_14.csv"
+}
