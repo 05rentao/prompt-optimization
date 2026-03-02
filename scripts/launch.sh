@@ -7,7 +7,7 @@ JUDGE_PORT=8002
 
 TARGET_MODEL="Qwen/Qwen2.5-0.5B-Instruct"
 # NEW: Llama 3.1 8B. Note: You must be logged into Hugging Face to use this.
-INSTRUCTOR_MODEL="meta-llama/Llama-3.1-8B-Instruct"
+INSTRUCTOR_MODEL="unsloth/Llama-3.1-8B-Instruct"
 JUDGE_MODEL="cais/HarmBench-Llama-2-13b-cls"
 
 mkdir -p logs
@@ -65,6 +65,4 @@ uv run python -m vllm.entrypoints.openai.api_server \
 wait_for_port $JUDGE_PORT
 
 echo "🔥 ALL SYSTEMS GO. Starting DSPy Pipeline..."
-uv run python main.py
-
-cleanup
+uv run script/gepa_run.py

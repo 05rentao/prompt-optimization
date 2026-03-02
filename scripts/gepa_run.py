@@ -107,7 +107,7 @@ def main():
         metric=safety_metric, 
         num_threads=8,       
         display_table=5,     
-        display_progress=True
+        display_progress=True,
         save_as_csv="outputs/detailed_baseline_results.csv"
     )
 
