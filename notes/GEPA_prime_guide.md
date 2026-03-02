@@ -10,10 +10,28 @@ Check make sure to checkout the H100 80GB x 1 GPU on Prime Intellect
 
 Once your Prime Intellect instance is "Running," connect via SSH.
 
-### 1. SSH into the machine
+### 1. Create and SSH prime pod
+
 
 ```bash
-ssh root@<YOUR_INSTANCE_IP>
+prime availability list --gpu-type H100_80GB
+```
+
+Pick one you like and copy its ID, and initialize the pod. Note: if it says "spot" this means that the GPU can spontaniously deactivate, pick a non-spot instance for stable performance. Feel free to also change the `--name` argument.
+
+```bash
+prime pods create --id <ID> --disk-size 500 --name run-gepa 
+```
+
+Once created, it will output a pod id of the instance you just created. To check the status of your pod and whether it's active, use:
+```bash
+prime pods status <Pod_ID>
+```
+
+Once the 'Status' says `ACTIVE` and `Installation Status` says ``FINISHED`, you can SSH into the machine. Copy the `SSH` string in the status output, and use the following command.
+
+```bash
+ssh <SSH_string>
 ```
 
 ### 2. Authenticate with GitHub
