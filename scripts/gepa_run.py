@@ -17,6 +17,7 @@ def load_config():
         return yaml.safe_load(f)
 
 config = load_config()
+os.makedirs("outputs", exist_ok=True)
 
 print("Loading 13B Judge Model into memory...")
 
@@ -123,13 +124,14 @@ def main():
     print("\n🧠 Starting GEPA Optimization with 14B Instructor...")
     optimizer = GEPA(
         metric=safety_metric,           
-        auto="light",                   
-        max_full_evals=50,
+        # REMOVE auto="light" -> It makes the optimizer too lazy
+        max_full_evals=10,
+        subsample_size=15,
         track_stats=True,
         log_dir="outputs/gepa_logs",
         use_merge=False,
-        skip_perfect_score=False,
-        reflection_lm=instructor_lm     
+        skip_perfect_score=False, 
+        reflection_lm=instructor_lm,
     )
 
     compiled_safety_program = optimizer.compile(
@@ -140,8 +142,6 @@ def main():
     print("✅ Optimization Complete!")
 
     # 6. Final Evaluation (Using the built-in save_as_csv from the docstring!)
-    os.makedirs("outputs", exist_ok=True)
-    
     evaluate_optimized = dspy.Evaluate(
         devset=val_set,      
         metric=safety_metric, 
