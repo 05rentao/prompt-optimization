@@ -3,6 +3,9 @@
 set -euo pipefail
 
 # --- CONFIGURATION ---
+
+export PYTHONPATH="${PYTHONPATH:-}:."
+
 JUDGE_PORT=8002
 JUDGE_MODEL="cais/HarmBench-Llama-2-13b-cls"
 JUDGE_GPU_UTIL=0.45
