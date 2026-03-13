@@ -11,3 +11,8 @@ logs/
 
 # Virtual environments
 .venv
+
+# others
+experimental_code/Copy_of_basic_implementation_without_gepa (4).ipynb
+.env
+__pycache__/
