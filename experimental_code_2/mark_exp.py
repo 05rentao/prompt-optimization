@@ -27,6 +27,9 @@ from datasets import load_dataset
 from openai import OpenAI
 from tqdm.auto import tqdm
 
+import gepa.optimize_anything as oa
+from gepa.optimize_anything import EngineConfig, GEPAConfig, ReflectionConfig, optimize_anything
+
 
 PROMPT_KEYS = [
     "prompt",
@@ -77,7 +80,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--task-model-name", default="Qwen/Qwen2.5-3B-Instruct")
     parser.add_argument(
         "--reflection-model-name",
-        default="meta-llama/Meta-Llama-3-8B-Instruct",
+        default="meta-llama/Llama-3.1-8B-Instruct",
     )
     parser.add_argument("--vllm-base-url", default="http://127.0.0.1:8000/v1")
     parser.add_argument("--vllm-api-key", default="EMPTY")
@@ -349,11 +352,6 @@ def run_gepa_optimization(
     val_data: List[Dict[str, Any]],
     baseline_system_prompt: str,
 ) -> Tuple[Any, List[Dict[str, Any]], float]:
-    try:
-        import gepa.optimize_anything as oa
-        from gepa.optimize_anything import EngineConfig, GEPAConfig, ReflectionConfig, optimize_anything
-    except Exception as exc:
-        raise RuntimeError("Failed to import GEPA. Install it with: pip install -U gepa") from exc
 
     gepa_train = [{"input": ex["prompt"], "id": ex["id"]} for ex in train_data]
     gepa_val = [{"input": ex["prompt"], "id": ex["id"]} for ex in val_data]
