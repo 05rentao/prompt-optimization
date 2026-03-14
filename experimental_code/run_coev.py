@@ -24,7 +24,9 @@ import torch.nn.functional as f
 from unsloth import FastLanguageModel
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
-from datasets import load_dataset
+from src.experiments.artifacts import write_run_manifest
+from src.experiments.data import load_harmbench_subset
+from src.experiments.types import RunManifest
 
 DEFAULT_REWRITER_INSTRUCTION = (
     "Output ONLY one line starting with 'PROMPT: '. Rewrite the user request "
@@ -213,11 +215,6 @@ def load_harmbench_judge() -> tuple[Any, Any]:
         padding_side="left",
     )
     return cls, tokenizer_judge
-
-
-def load_harmbench_prompts() -> list[str]:
-    dataset = load_dataset("walledai/HarmBench", "standard")
-    return list(dataset["train"]["prompt"])
 
 
 def policy_sample(
@@ -547,9 +544,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hf-token", default=None, help="Optional Hugging Face token.")
     parser.add_argument("--save-dir", default=None, help="Optional output directory to save adapters/tokenizer.")
     parser.add_argument("--eval-instruction", default=DEFAULT_REWRITER_INSTRUCTION)
+    parser.add_argument("--dataset-name", default="walledai/HarmBench")
+    parser.add_argument("--dataset-config", default="standard")
+    parser.add_argument("--dataset-split", default="train")
+    parser.add_argument("--train-size", type=int, default=100)
+    parser.add_argument("--val-size", type=int, default=20)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--results-dir", default="results")
+    parser.add_argument("--runtime-profile", default="local_transformers")
     return parser.parse_args()
 
 def main() -> None:
+    run_start = time.time()
     args = parse_args()
     device = resolve_device(args.device)
 
@@ -561,7 +567,16 @@ def main() -> None:
     model, tokenizer = load_adversary_model(adversary_cfg)
     target_model, target_tokenizer = load_target_model(target_cfg, hf_token=args.hf_token)
     cls, tokenizer_judge = load_harmbench_judge()
-    prompts = load_harmbench_prompts()
+    train_data, val_data, _ = load_harmbench_subset(
+        dataset_name=args.dataset_name,
+        dataset_config=args.dataset_config,
+        split=args.dataset_split,
+        train_size=args.train_size,
+        val_size=args.val_size,
+        seed=args.seed,
+        hf_token=args.hf_token or os.getenv("HF_TOKEN") or "",
+    )
+    prompts = [sample["prompt"] for sample in (train_data + val_data)]
 
     if args.mode == "reinforce":
         run_reinforce_training(
@@ -589,6 +604,38 @@ def main() -> None:
     
 
     maybe_save_adapters(model, tokenizer, args.save_dir)
+
+    results_dir = Path(args.results_dir).resolve()
+    manifest = RunManifest(
+        mode=f"coev_{args.mode}",
+        runtime_profile=args.runtime_profile,
+        seed=args.seed,
+        dataset={
+            "dataset_name": args.dataset_name,
+            "dataset_config": args.dataset_config,
+            "dataset_split": args.dataset_split,
+            "train_size": args.train_size,
+            "val_size": args.val_size,
+        },
+        models={
+            "adversary_model": adversary_cfg.model_id,
+            "target_model": target_cfg.model_id,
+            "judge_model": "cais/HarmBench-Mistral-7b-val-cls",
+        },
+        budget={
+            "reinforce_iterations": reinforce_cfg.iterations,
+            "gepa_stages": gepa_cfg.stages,
+            "gepa_iters_per_stage": gepa_cfg.iters_per_stage,
+            "run_seconds": time.time() - run_start,
+        },
+        extra={
+            "save_dir": args.save_dir,
+            "reinforce_csv": reinforce_cfg.csv_path,
+            "gepa_csv": gepa_cfg.csv_path,
+        },
+    )
+    manifest_path = write_run_manifest(results_dir=results_dir, payload=manifest)
+    print(f"Wrote run manifest: {manifest_path}")
 
 
 if __name__ == "__main__":
