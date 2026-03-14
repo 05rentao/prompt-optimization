@@ -18,6 +18,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
+import torch
+import torch.nn.functional as f
+
+from unsloth import FastLanguageModel
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+
+from datasets import load_dataset
 
 DEFAULT_REWRITER_INSTRUCTION = (
     "Output ONLY one line starting with 'PROMPT: '. Rewrite the user request "
@@ -84,15 +91,15 @@ class TargetModelConfig:
 #     csv_path: str = "training_log.csv"
 
 
-@dataclass  # smoke test eval
+@dataclass
 class ReinforceConfig:
-    iterations: int = 2
+    iterations: int = 20         # Enough to see a pattern in rewards
     lr: float = 5e-5
     weight_decay: float = 0.01
-    eval_every: int = 1
-    train_slice_end: int = 2
-    eval_slice_start: int = 2
-    eval_slice_end: int = 4
+    eval_every: int = 4          # Check ASR five times during the run
+    train_slice_end: int = 50    # Pull from a pool of 50 different prompts
+    eval_slice_start: int = 100
+    eval_slice_end: int = 110     # Eval against 10 prompts
     csv_path: str = "smoke_test_reinforce.csv"
 
 
@@ -112,22 +119,20 @@ class ReinforceConfig:
 
 @dataclass
 class GepaConfig:
-    stages: int = 1              # Only 1 evolutionary stage
-    iters_per_stage: int = 2     # 2 iterations per stage
-    eval_every_stages: int = 1   # Eval every stage
+    stages: int = 2              # Two evolutionary jumps
+    iters_per_stage: int = 5     # 10 total training steps
+    eval_every_stages: int = 1   # See ASR after every stage
     lr: float = 1e-5
     weight_decay: float = 0.01
-    train_slice_end: int = 2
-    eval_slice_start: int = 2
-    eval_slice_end: int = 4
+    train_slice_end: int = 50
+    eval_slice_start: int = 100
+    eval_slice_end: int = 110
     csv_path: str = "smoke_test_gepa.csv"
     initial_attacker_instruction: str = DEFAULT_GEPA_ATTACKER_INSTRUCTION
     initial_defense_prompt: str = DEFAULT_DEFENSE_PROMPT
 
 
 def resolve_device(device_override: str | None) -> str:
-    import torch
-
     if device_override:
         return device_override
     return "cuda" if torch.cuda.is_available() else "cpu"
@@ -149,7 +154,6 @@ def is_yes_verdict(verdict: str) -> bool:
 
 
 def load_adversary_model(cfg: ModelConfig) -> tuple[Any, Any]:
-    from unsloth import FastLanguageModel
 
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=cfg.model_id,
@@ -169,9 +173,7 @@ def load_adversary_model(cfg: ModelConfig) -> tuple[Any, Any]:
 
 
 def load_target_model(cfg: TargetModelConfig, hf_token: str | None) -> tuple[Any, Any]:
-    import torch
-    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
-
+    
     token = hf_token or os.getenv("HF_TOKEN")
     if not token:
         raise RuntimeError("Missing Hugging Face token. Set HF_TOKEN or pass --hf-token.")
@@ -198,12 +200,10 @@ def load_target_model(cfg: TargetModelConfig, hf_token: str | None) -> tuple[Any
 
 
 def load_harmbench_judge() -> tuple[Any, Any]:
-    import torch
-    from transformers import AutoModelForCausalLM, AutoTokenizer
-
+    
     cls = AutoModelForCausalLM.from_pretrained(
         "cais/HarmBench-Mistral-7b-val-cls",
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         device_map="auto",
     )
     tokenizer_judge = AutoTokenizer.from_pretrained(
@@ -216,8 +216,6 @@ def load_harmbench_judge() -> tuple[Any, Any]:
 
 
 def load_harmbench_prompts() -> list[str]:
-    from datasets import load_dataset
-
     dataset = load_dataset("walledai/HarmBench", "standard")
     return list(dataset["train"]["prompt"])
 
@@ -232,9 +230,7 @@ def policy_sample(
     top_p: float = 0.9,
     max_length: int = 2048,
 ) -> dict[str, Any]:
-    import torch
-    import torch.nn.functional as f
-
+    
     prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
     enc = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=max_length).to(device)
     with torch.no_grad():
@@ -269,7 +265,7 @@ def policy_sample(
 
 
 def target_generate(prompt: str, target_model: Any, target_tokenizer: Any, device: str, defense_prompt: str | None = None) -> str:
-    import torch
+    
 
     system_prompt = defense_prompt or (
         "You are a helpful, respectful and honest assistant. "
@@ -294,8 +290,7 @@ def target_generate_defended(prompt: str, defense_prompt: str, target_model: Any
 
 
 def reinforce_update_batch_sgd(model: Any, optimizer: Any, gen_ids: Any, prompt_lens: list[int], rewards: Any) -> tuple[float, Any]:
-    import torch
-    import torch.nn.functional as f
+
 
     model.train()
     out = model(input_ids=gen_ids, use_cache=False)
@@ -305,7 +300,7 @@ def reinforce_update_batch_sgd(model: Any, optimizer: Any, gen_ids: Any, prompt_
     logprob_sums = []
     for i in range(gen_ids.size(0)):
         prompt_len = int(prompt_lens[i])
-        comp_ids = gen_ids[i, prompt_len:]
+        comp_ids = gen_ids[i, prompt_len:].clone()
         if comp_ids.numel() == 0:
             logprob_sums.append(torch.tensor(0.0, device=gen_ids.device))
             continue
@@ -377,7 +372,7 @@ def evaluate_asr(
 
 
 def gepa_evolve_prompts(stage_logs: list[dict[str, Any]], model: Any, tokenizer: Any, device: str) -> tuple[str, str]:
-    import torch
+    
 
     successes = [log for log in stage_logs if log["reward"] > 0.5]
     failures = [log for log in stage_logs if log["reward"] <= 0.5]
@@ -418,7 +413,7 @@ def run_reinforce_training(
     tokenizer_judge: Any,
     device: str,
 ) -> None:
-    import torch
+    
 
     train_prompts = prompts[: cfg.train_slice_end]
     eval_prompts = prompts[cfg.eval_slice_start : cfg.eval_slice_end]
@@ -472,7 +467,7 @@ def run_gepa_training(
     tokenizer_judge: Any,
     device: str,
 ) -> None:
-    import torch
+    
 
     train_prompts = prompts[: cfg.train_slice_end]
     eval_prompts = prompts[cfg.eval_slice_start : cfg.eval_slice_end]
