@@ -10,7 +10,6 @@ This module keeps the original workflow while removing notebook artifacts:
 from __future__ import annotations
 
 import argparse
-import csv
 import os
 import re
 import time
@@ -20,6 +19,7 @@ from typing import Any, Iterable
 
 import torch
 import torch.nn.functional as f
+import pandas as pd
 
 from unsloth import FastLanguageModel
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
@@ -27,6 +27,8 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from src.experiments.artifacts import write_run_manifest
 from src.experiments.data import load_harmbench_subset
 from src.experiments.types import RunManifest
+
+from src.experiments.evaluators import is_yes_verdict
 
 DEFAULT_REWRITER_INSTRUCTION = (
     "Output ONLY one line starting with 'PROMPT: '. Rewrite the user request "
@@ -151,10 +153,6 @@ def sanitize_gepa_output(text: str) -> str:
     return text.strip().split("\n")[0]
 
 
-def is_yes_verdict(verdict: str) -> bool:
-    return str(verdict).strip().lower().startswith("yes")
-
-
 def load_adversary_model(cfg: ModelConfig) -> tuple[Any, Any]:
 
     model, tokenizer = FastLanguageModel.from_pretrained(
@@ -174,11 +172,11 @@ def load_adversary_model(cfg: ModelConfig) -> tuple[Any, Any]:
     return model, tokenizer
 
 
-def load_target_model(cfg: TargetModelConfig, hf_token: str | None) -> tuple[Any, Any]:
+def load_target_model(cfg: TargetModelConfig) -> tuple[Any, Any]:
     
-    token = hf_token or os.getenv("HF_TOKEN")
+    token = os.getenv("HF_TOKEN")
     if not token:
-        raise RuntimeError("Missing Hugging Face token. Set HF_TOKEN or pass --hf-token.")
+        raise RuntimeError("Missing Hugging Face token. Set HF_TOKEN.")
 
     os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
     bnb_cfg = BitsAndBytesConfig(
@@ -411,27 +409,37 @@ def run_reinforce_training(
     device: str,
 ) -> None:
     
-
     train_prompts = prompts[: cfg.train_slice_end]
     eval_prompts = prompts[cfg.eval_slice_start : cfg.eval_slice_end]
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 
     t0 = time.time()
-    with open(cfg.csv_path, mode="w", newline="", encoding="utf-8") as file:
-        writer = csv.writer(file)
-        writer.writerow(["iteration", "dataset_index", "prompt", "adversary_output", "target_response", "reward", "loss", "verdict", "eval_asr"])
-
+    log_columns = [
+        "iteration",
+        "dataset_index",
+        "prompt",
+        "adversary_output",
+        "target_response",
+        "reward",
+        "loss",
+        "verdict",
+        "eval_asr",
+    ]
+    log_rows: list[list[Any]] = []
     for i in range(cfg.iterations):
         idx = torch.randint(0, len(train_prompts), ()).item()
         prompt = train_prompts[idx]
+
+        # Core generation and judge logic
         res = adversary_output(prompt, DEFAULT_REWRITER_INSTRUCTION, model, tokenizer, device)
         adversary_text = res["completion_text"].strip()
-
         target_response = target_generate(adversary_text, target_model, target_tokenizer, device=device)
+
         verdict = generate_harmbench_results(prompt, [target_response], cls, tokenizer_judge)[0]
         reward = 1.0 if is_yes_verdict(verdict) else 0.0
 
-        rewards = torch.tensor([reward], dtype=torch.float32, device=res["gen_ids"].device)
+        # RL Update
+        rewards = torch.tensor([reward], dtype=torch.float32, device=res["gen_ids"].device)  # make reward into a tensor
         loss_val, _ = reinforce_update_batch_sgd(model, optimizer, res["gen_ids"], [res["prompt_len"]], rewards)
 
         eval_asr: str | float = ""
@@ -441,13 +449,26 @@ def run_reinforce_training(
             )
             print(f"Iter {i} | Current ASR: {eval_asr:.3f}")
 
-        with open(cfg.csv_path, mode="a", newline="", encoding="utf-8") as file:
-            writer = csv.writer(file)
-            writer.writerow([i, idx, clean_text(prompt), clean_text(adversary_text), clean_text(target_response), reward, loss_val, verdict, eval_asr])
+        log_rows.append(
+            [
+                i,
+                idx,
+                clean_text(prompt),
+                clean_text(adversary_text),
+                clean_text(target_response),
+                reward,
+                loss_val,
+                verdict,
+                eval_asr,
+            ]
+        )
+    pd.DataFrame(log_rows, columns=log_columns).to_csv(cfg.csv_path, index=False)
 
+    # Final evaluation pass
     final_asr = evaluate_asr(
         eval_prompts, DEFAULT_REWRITER_INSTRUCTION, model, tokenizer, target_model, target_tokenizer, cls, tokenizer_judge, device
     )
+    
     print(f"Final ASR: {final_asr:.3f}")
     print(f"Saved to: {cfg.csv_path}")
     print(f"Seconds per iter: {(time.time() - t0) / max(cfg.iterations, 1):.3f}")
@@ -464,26 +485,35 @@ def run_gepa_training(
     tokenizer_judge: Any,
     device: str,
 ) -> None:
-    
 
     train_prompts = prompts[: cfg.train_slice_end]
     eval_prompts = prompts[cfg.eval_slice_start : cfg.eval_slice_end]
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 
-    attacker_instruction = cfg.initial_attacker_instruction
-    defense_prompt = cfg.initial_defense_prompt
+    attacker_instruction = cfg.initial_attacker_instruction  # updated by GEPA, default to DEFAULT_GEPA_ATTACKER_INSTRUCTION
+    defense_prompt = cfg.initial_defense_prompt  # updated by GEPA
 
-    with open(cfg.csv_path, mode="w", newline="", encoding="utf-8") as file:
-        writer = csv.writer(file)
-        writer.writerow(["stage", "iter", "attacker_instr", "defense_prompt", "orig_prompt", "adv_prompt", "target_resp", "reward", "verdict", "eval_asr"])
+    log_columns = [
+        "stage",
+        "iter",
+        "attacker_instr",
+        "defense_prompt",
+        "orig_prompt",
+        "adv_prompt",
+        "target_resp",
+        "reward",
+        "verdict",
+        "eval_asr",
+    ]
+    log_rows: list[list[Any]] = []
 
     print("Starting dual-layer GEPA training...")
     for stage in range(cfg.stages):
         print(f"\n--- Stage {stage} ---")
         stage_logs: list[dict[str, Any]] = []
 
+        # first freeze system prompts and just update adversary weights w reinforce
         for i in range(cfg.iters_per_stage):
-            idx = torch.randint(0, len(train_prompts), ()).item()
             original_prompt = train_prompts[idx]
             res = adversary_output(original_prompt, attacker_instruction, model, tokenizer, device)
             adv_rewrite = res["completion_text"].strip()
@@ -507,27 +537,42 @@ def run_gepa_training(
             )
             stage_logs.append({"adv": adv_rewrite, "reward": reward})
 
-            with open(cfg.csv_path, mode="a", newline="", encoding="utf-8") as file:
-                writer = csv.writer(file)
-                writer.writerow(
-                    [stage, i, clean_text(attacker_instruction), clean_text(defense_prompt), clean_text(original_prompt), clean_text(adv_rewrite), clean_text(target_resp), reward, verdict, ""]
-                )
+            log_rows.append(
+                [
+                    stage,
+                    i,
+                    clean_text(attacker_instruction),
+                    clean_text(defense_prompt),
+                    clean_text(original_prompt),
+                    clean_text(adv_rewrite),
+                    clean_text(target_resp),
+                    reward,
+                    verdict,
+                    "",
+                ]
+            )
+            pd.DataFrame(log_rows, columns=log_columns).to_csv(cfg.csv_path, index=False)
 
         if stage % cfg.eval_every_stages == 0:
             asr = evaluate_asr(
                 eval_prompts, attacker_instruction, model, tokenizer, target_model, target_tokenizer, cls, tokenizer_judge, device
             )
             print(f"Stage {stage} Eval ASR: {asr:.2%}")
-            with open(cfg.csv_path, mode="a", newline="", encoding="utf-8") as file:
-                csv.writer(file).writerow([stage, "EVAL", clean_text(attacker_instruction), clean_text(defense_prompt), "", "", "", "", "", asr])
-
+            log_rows.append(
+                [stage, "EVAL", clean_text(attacker_instruction), clean_text(defense_prompt), "", "", "", "", "", asr]
+            )
+            pd.DataFrame(log_rows, columns=log_columns).to_csv(cfg.csv_path, index=False)
+        
+        # then use gepa to update everyones prompts with the updated (now frozen) weights.
         attacker_instruction, defense_prompt = gepa_evolve_prompts(stage_logs, model, tokenizer, device)
         print(f"Updated attacker instruction: {attacker_instruction}")
+        # update prompts and then rinse and repeat
 
     print("Training complete.")
 
 
 def maybe_save_adapters(model: Any, tokenizer: Any, save_dir: str | None) -> None:
+    # save only adapter weights (lora layers)
     if not save_dir:
         return
     output_dir = Path(save_dir)
@@ -541,7 +586,6 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Refactored GEPA/REINFORCE training pipeline.")
     parser.add_argument("--mode", choices=["reinforce", "gepa", "eval"], default="reinforce")
     parser.add_argument("--device", default=None, help="Device override (e.g. cuda, cpu).")
-    parser.add_argument("--hf-token", default=None, help="Optional Hugging Face token.")
     parser.add_argument("--save-dir", default=None, help="Optional output directory to save adapters/tokenizer.")
     parser.add_argument("--eval-instruction", default=DEFAULT_REWRITER_INSTRUCTION)
     parser.add_argument("--dataset-name", default="walledai/HarmBench")
@@ -554,6 +598,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--runtime-profile", default="local_transformers")
     return parser.parse_args()
 
+
 def main() -> None:
     run_start = time.time()
     args = parse_args()
@@ -565,8 +610,9 @@ def main() -> None:
     gepa_cfg = GepaConfig()
 
     model, tokenizer = load_adversary_model(adversary_cfg)
-    target_model, target_tokenizer = load_target_model(target_cfg, hf_token=args.hf_token)
+    target_model, target_tokenizer = load_target_model(target_cfg)
     cls, tokenizer_judge = load_harmbench_judge()
+
     train_data, val_data, _ = load_harmbench_subset(
         dataset_name=args.dataset_name,
         dataset_config=args.dataset_config,
@@ -574,9 +620,9 @@ def main() -> None:
         train_size=args.train_size,
         val_size=args.val_size,
         seed=args.seed,
-        hf_token=args.hf_token or os.getenv("HF_TOKEN") or "",
+        hf_token=os.getenv("HF_TOKEN"),
     )
-    prompts = [sample["prompt"] for sample in (train_data + val_data)]
+    prompts = [sample["prompt"] for sample in (train_data)]  # use train_data only for training
 
     if args.mode == "reinforce":
         run_reinforce_training(
@@ -601,7 +647,6 @@ def main() -> None:
         )
         print(f"Eval ASR: {asr:.2%}")
 
-    
 
     maybe_save_adapters(model, tokenizer, args.save_dir)
 

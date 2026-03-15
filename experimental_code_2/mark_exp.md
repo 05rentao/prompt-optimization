@@ -16,8 +16,8 @@ The script runs an end-to-end GEPA prompt optimization workflow for safety behav
 
 ### External services
 
-- **Task model endpoint**: local vLLM server exposed as OpenAI-compatible API (`--vllm-base-url`).
-- **Reflection model endpoint**: OpenAI API (`--openai-api-key`, `--reflection-model-name`).
+- **Target model runtime**: local `transformers` load in-process (same startup style as `experimental_code/run_coev.py`).
+- **Reflection model endpoint**: OpenAI-compatible API (typically local vLLM on `--reflection-vllm-base-url`).
 - **Dataset source**: Hugging Face dataset (`--dataset-name`, `--dataset-config`, `--dataset-split`).
 
 ### Python packages
@@ -25,22 +25,24 @@ The script runs an end-to-end GEPA prompt optimization workflow for safety behav
 Core packages used by the script:
 
 - `gepa`
-- `openai`
+- `openai` (reflection calls)
 - `datasets`
 - `pandas`
 - `numpy`
 - `matplotlib`
 - `seaborn`
 - `tqdm`
+- `torch`
+- `transformers`
 
 ## Core Pipeline
 
 ```mermaid
 flowchart TD
-    parseArgs[ParseArgsAndEnv] --> maybePrompt[PromptMissingSecretsOptional]
-    maybePrompt --> loadData[LoadAndNormalizeHarmBenchSubset]
-    loadData --> verifyClients[VerifyTaskAndReflectionClients]
-    verifyClients --> baselineEval[EvaluateBaselineSystemPrompt]
+    parseArgs[ParseArgsAndEnv] --> loadData[LoadAndNormalizeHarmBenchSubset]
+    loadData --> loadTarget[LoadTargetModelTransformers4bit]
+    loadTarget --> verifyReflection[VerifyReflectionEndpoint]
+    verifyReflection --> baselineEval[EvaluateBaselineSystemPrompt]
     baselineEval --> runOpt[RunGepaOptimization]
     runOpt --> extractBest[ExtractBestCandidateAndScore]
     extractBest --> optimizedEval[EvaluateOptimizedSystemPrompt]
@@ -50,28 +52,33 @@ flowchart TD
 ## Step-by-Step Functionality
 
 1. **Argument and environment parsing**
-   - `parse_args()` defines all tunable parameters (dataset sizes, model names, endpoint URLs, token limits, optimization budget).
-   - API keys and tokens default to environment variables but can be passed by CLI.
+   - `parse_args()` defines dataset sizes, model ids, reflection endpoint settings, and optimization budget.
+   - Hugging Face token is read from environment only (`HF_TOKEN` or `HUGGINGFACE_HUB_TOKEN`).
 
-2. **Optional hidden credential prompt**
-   - `maybe_prompt_missing_secrets()` allows runtime credential entry when `--prompt-for-missing-secrets` is set.
-   - Useful when notebook/kernel-like environments do not inherit shell exports.
-
-3. **Dataset loading and normalization**
+2. **Dataset loading and normalization**
    - `load_harmbench_subset()` loads a gated or public HF dataset split, shuffles deterministically, and slices train/val subsets.
-   - `normalize_record()` auto-detects prompt/id fields from candidate key lists and standardizes records.
    - Output records use a consistent schema: `id`, `prompt`, `is_harmful_request=True`.
 
-4. **Task/reflection connectivity checks**
-   - `verify_task_and_reflection_clients()`:
-     - validates vLLM endpoint reachability,
-     - confirms requested task model is served,
-     - runs a short smoke generation for task model,
-     - verifies reflection model access via OpenAI API.
+3. **Target model startup (now unified with `run_coev.py`)**
+   - `TargetModelConfig` now matches the coev target config structure:
+
+```python
+@dataclass
+class TargetModelConfig:
+    model_id: str = "meta-llama/Llama-2-7b-chat-hf"
+    max_new_tokens: int = 150
+```
+
+   - `load_target_model()` uses `transformers` + `BitsAndBytesConfig` (`4bit`, `nf4`, `device_map="auto"`).
+   - Inference runs via local `generate()` instead of OpenAI task-client calls.
+
+4. **Reflection connectivity checks**
+   - `verify_reflection_client()` validates the reflection endpoint and does a smoke prompt.
+   - GEPA reflection still uses `ReflectionConfig(reflection_lm="openai/<model>")`.
 
 5. **Metric definition and baseline evaluation**
-   - `refusal_score()` applies a simple refusal-phrase heuristic.
-   - `evaluate_system_prompt()` runs inference per example and computes:
+   - `compute_refusal_score()` applies a refusal-phrase heuristic.
+   - `evaluate_system_prompt()` runs local target inference per example and computes:
      - `refusal_rate`
      - `unsafe_compliance_rate`
      - `mean_refusal_score`
@@ -86,9 +93,10 @@ flowchart TD
      - `GEPAConfig` with `EngineConfig(max_metric_calls=...)`,
      - `ReflectionConfig(reflection_lm="openai/<model>")`.
    - Evaluator returns score + side info and appends per-call trace records.
+   - Candidate scoring uses the same local target generation path as baseline eval.
 
 7. **Best prompt extraction and re-evaluation**
-   - `extract_best_candidate_and_score()` handles both dict and object result styles from GEPA.
+   - `extract_best_candidate_and_score()` handles multiple GEPA result object styles for compatibility.
    - Optimized prompt falls back to baseline if missing.
    - Optimized prompt is evaluated with the same validation protocol.
 
@@ -109,21 +117,25 @@ Example command:
 
 ```bash
 python experimental_code_2/mark_exp.py \
-  --task-model-name "Qwen/Qwen2.5-3B-Instruct" \
-  --reflection-model-name "gpt-4o-mini" \
+  --task-model-name "meta-llama/Llama-2-7b-chat-hf" \
+  --reflection-model-name "meta-llama/Llama-3.1-8B-Instruct" \
+  --reflection-vllm-base-url "http://127.0.0.1:8001/v1" \
   --dataset-name "walledai/HarmBench" \
   --dataset-config "standard" \
   --dataset-split "train" \
   --train-size 100 \
   --val-size 100 \
   --max-metric-calls 300 \
-  --show-progress
+  --show-progress \
+  --runtime-profile "local_transformers"
 ```
 
-If secrets are not exported:
+Required env:
 
 ```bash
-python experimental_code_2/mark_exp.py --prompt-for-missing-secrets
+export HF_TOKEN="hf_xxx"
+# or
+export HUGGINGFACE_HUB_TOKEN="hf_xxx"
 ```
 
 ## Output Interpretation
@@ -170,7 +182,7 @@ Then compose aggregate metrics from configurable evaluator weights.
 
 ### 4) Add robust retry/backoff and failure isolation
 
-Network calls are central and should be hardened:
+Reflection endpoint calls are central and should be hardened:
 
 - retry policy for transient API failures/timeouts
 - per-example failure capture without aborting whole run
@@ -180,7 +192,7 @@ Network calls are central and should be hardened:
 
 Long runs can be expensive. Add:
 
-- response cache keyed by `(system_prompt, input, model_name, gen_params)`
+- response cache keyed by `(system_prompt, input, target_model_name, gen_params)`
 - periodic checkpointing of optimizer trace and intermediate best candidate
 - resume option for interrupted runs
 
@@ -207,5 +219,5 @@ Testing targets:
 1. Introduce dataclasses and typed config objects.
 2. Extract evaluation/scoring into `evaluation.py`.
 3. Extract GEPA runner into `optimization.py`.
-4. Add network retry + per-example error handling.
+4. Add reflection retry + per-example error handling.
 5. Add checkpointing and run-directory versioning.

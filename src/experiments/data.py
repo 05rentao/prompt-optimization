@@ -46,39 +46,16 @@ def load_harmbench_subset(
     seed: int,
     hf_token: str,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], pd.DataFrame]:
-    token = hf_token or ""
-    has_token = bool(token)
-
-    try:
-        try:
-            ds = load_dataset(
-                dataset_name,
-                name=dataset_config or None,
-                split=split,
-                token=token if has_token else None,
-            )
-        except TypeError:
-            ds = load_dataset(
-                dataset_name,
-                name=dataset_config or None,
-                split=split,
-                use_auth_token=token if has_token else None,
-            )
-    except Exception as exc:
-        raise RuntimeError(
-            f"Failed to load dataset {dataset_name!r} config={dataset_config!r} split={split!r}. "
-            "Check your dataset id/config and Hugging Face token access."
-        ) from exc
+    
+    ds = load_dataset(dataset_name, name=dataset_config, split=split, token=hf_token)
 
     total_needed = train_size + val_size
     if len(ds) < total_needed:
-        raise ValueError(
-            f"Dataset split size ({len(ds)}) is smaller than requested train+val ({total_needed})."
-        )
+        raise ValueError(f"Need {total_needed} samples, but only found {len(ds)}.")
 
+    # Shuffle and normalize
     shuffled = ds.shuffle(seed=seed).select(range(total_needed))
     normalized = [normalize_harmbench_record(shuffled[i], i) for i in range(total_needed)]
-    train_data = normalized[:train_size]
-    val_data = normalized[train_size:]
-    preview_df = pd.DataFrame(normalized)
-    return train_data, val_data, preview_df
+
+    return normalized[:train_size], normalized[train_size:], pd.DataFrame(normalized)
+    # returns train_data, val_data, preview_df
