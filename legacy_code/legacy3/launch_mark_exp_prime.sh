@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Prime launcher for experimental_code_2/mark_exp.py
+# Prime launcher for runs/gepa_run.py
 # Starts two local vLLM OpenAI-compatible endpoints:
 #   - Task model on :8000
 #   - Reflection model on :8001
@@ -85,8 +85,8 @@ uv run python -m vllm.entrypoints.openai.api_server \
   --enforce-eager > logs/mark_exp_reflection_vllm.log 2>&1 &
 wait_for_port "${REFLECTION_PORT}" "reflection vLLM"
 
-echo "Launching mark_exp.py with dual local vLLM endpoints..."
-uv run python experimental_code_2/mark_exp.py \
+echo "Launching gepa_run.py with dual local vLLM endpoints..."
+uv run python runs/gepa_run.py \
   --vllm-base-url "http://127.0.0.1:${TASK_PORT}/v1" \
   --task-model-name "${TASK_MODEL}" \
   --reflection-vllm-base-url "http://127.0.0.1:${REFLECTION_PORT}/v1" \

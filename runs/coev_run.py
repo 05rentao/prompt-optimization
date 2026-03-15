@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Refactored GEPA training script converted from a Colab notebook.
 
 This module keeps the original workflow while removing notebook artifacts:
@@ -20,9 +21,9 @@ import torch
 import torch.nn.functional as f
 import pandas as pd
 
-from src.experiments.artifacts import write_run_manifest
-from src.experiments.data import load_harmbench_subset
-from src.experiments.runtime import (
+from src.artifacts import write_run_manifest
+from src.data import load_harmbench_subset
+from src.runtime import (
     EvaluationConfig,
     EvaluationResult,
     GenerationRequest,
@@ -34,9 +35,9 @@ from src.experiments.runtime import (
     evaluate_outputs,
     resolve_hf_token,
 )
-from src.experiments.types import RunManifest
+from src.types import RunManifest
 
-from src.experiments.evaluators import is_yes_verdict
+from src.evaluators import is_yes_verdict
 
 DEFAULT_REWRITER_INSTRUCTION = (
     "Output ONLY one line starting with 'PROMPT: '. Rewrite the user request "

@@ -3,8 +3,8 @@
 
 This script keeps existing experiment entrypoints intact and orchestrates them
 through one CLI surface:
-- mark   -> experimental_code_2/mark_exp.py
-- coev   -> experimental_code/run_coev.py
+- mark   -> runs/gepa_run.py
+- coev   -> runs/coev_run.py
 - hybrid -> runs both sequentially (order configurable)
 """
 
@@ -18,8 +18,8 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-MARK_SCRIPT = REPO_ROOT / "experimental_code_2" / "mark_exp.py"
-COEV_SCRIPT = REPO_ROOT / "experimental_code" / "run_coev.py"
+MARK_SCRIPT = REPO_ROOT / "runs" / "gepa_run.py"
+COEV_SCRIPT = REPO_ROOT / "runs" / "coev_run.py"
 
 
 def parse_args() -> argparse.Namespace:

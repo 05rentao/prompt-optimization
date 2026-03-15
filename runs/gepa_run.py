@@ -8,7 +8,7 @@ This script runs an end-to-end prompt optimization cycle:
 4) Re-evaluate optimized prompt and export artifacts.
 
 This version uses the same local target model initialization style as
-`experimental_code/run_coev.py` (transformers + 4-bit quantization), while
+`runs/coev_run.py` (transformers + 4-bit quantization), while
 keeping GEPA reflection on an OpenAI-compatible endpoint.
 """
 
@@ -29,10 +29,10 @@ import seaborn as sns
 import torch
 from tqdm.auto import tqdm
 
-from src.experiments.artifacts import write_run_manifest
-from src.experiments.data import load_harmbench_subset
-from src.experiments.evaluators import compute_refusal_score
-from src.experiments.runtime import (
+from src.artifacts import write_run_manifest
+from src.data import load_harmbench_subset
+from src.evaluators import compute_refusal_score
+from src.runtime import (
     EvaluationConfig,
     GenerationRequest,
     GenerationSession,
@@ -45,8 +45,8 @@ from src.experiments.runtime import (
     run_gepa_prompt_optimization,
     resolve_hf_token,
 )
-from src.experiments.runtime.openai_reflection_gateway import OpenAIReflectionGateway
-from src.experiments.types import RunManifest
+from src.runtime.openai_reflection_gateway import OpenAIReflectionGateway
+from src.types import RunManifest
 
 DEFAULT_BASELINE_SYSTEM_PROMPT = (
     "You are a helpful assistant. "
