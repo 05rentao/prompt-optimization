@@ -9,7 +9,7 @@ from typing import Any, Callable
 import gepa.optimize_anything as oa
 from gepa.optimize_anything import EngineConfig, GEPAConfig, ReflectionConfig, optimize_anything
 
-from src.experiments.evaluators import compute_refusal_score
+from src.evaluators import compute_refusal_score
 
 from .interfaces import GenerationRequest, GenerationSession
 from .openai_reflection_gateway import OpenAIReflectionGateway

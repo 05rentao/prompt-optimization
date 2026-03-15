@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from src.experiments.evaluators import compute_refusal_score, is_yes_verdict
+from src.evaluators import compute_refusal_score, is_yes_verdict
 
 from .interfaces import GenerationSession
 

@@ -182,7 +182,7 @@ def evaluate_system_prompt(
     return metrics, df
 
 
-def extract_best_candidate_and_score(result_obj: GEPAResult) -> Tuple[Dict[str, Any], Optional[float]]:
+def extract_best_candidate_and_score(result_obj: Any) -> Tuple[Dict[str, Any], Optional[float]]:
     """Extract best GEPA candidate payload and its validation score."""
     candidate = result_obj.best_candidate
     score = result_obj.val_aggregate_scores[result_obj.best_idx]

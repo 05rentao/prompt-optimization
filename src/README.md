@@ -1,23 +1,89 @@
-# Runtime Module Guide
+# `src/` and `src/runtime/` Module Guide
 
-This directory contains reusable runtime primitives for experiment scripts such as:
+## Overview
 
+`src/` is the shared library layer used by experiment entrypoints in `runs/`. It is intentionally modular so training/evaluation scripts can stay focused on pipeline control flow.
+
+**Primary consumers:**
 - `runs/coev_run.py`
 - `runs/gepa_run.py`
 
-The goal is to keep scripts focused on **orchestration** (what to run) while moving reusable runtime/evaluation/optimization mechanics here (how to run).
+### Modularity Rules
 
-## Design Intent
+- `runs/` owns **orchestration**: CLI args, phase ordering, logging, artifact naming.
+- `src/` owns **reusable implementation**: dataset loading, scoring, runtime wrappers, GEPA helpers.
+- `src/runtime/` owns **backend-specific adapters** behind stable interfaces.
+- New pipeline logic should compose existing `src` modules before adding new abstractions.
 
-- Keep experiment entrypoints simple and readable.
-- Avoid duplicating model bootstrapping and generation logic.
-- Make GEPA/refusal evaluation reusable across future pipelines.
-- Centralize environment/token handling in one place.
+---
+
+## Package Layout
+
+| File | Responsibility |
+|---|---|
+| `src/data.py` | HarmBench subset loading and split shaping |
+| `src/evaluators.py` | Refusal heuristics and judge verdict normalization |
+| `src/artifacts.py` | Consistent run manifest writing |
+| `src/types.py` | Shared typed payloads (e.g. `RunManifest`) |
+| `src/runtime/` | Generation/judge/reflection runtime interfaces and implementations |
+
+---
+
+## `src/runtime/` File-by-File
+
+### `interfaces.py`
+Core protocol contracts:
+- `GenerationRequest`: normalized single-turn chat generation input.
+- `TargetRuntime`: protocol with `generate(...)`.
+- `JudgeRuntime`: protocol with `judge(...)`.
+- `ReflectionGateway`: protocol with `verify(...)`, `smoke_test(...)`.
+- `LoRABridge`: protocol for adapter persistence (`save_adapters(...)`).
+- `GenerationSession`: lightweight wrapper exposing `generate(...)` and `judge(...)`.
+
+### `config.py`
+Dataclasses for runtime construction used as inputs to `RuntimeCatalog`:
+- `LocalHFConfig`
+- `UnslothAdversaryConfig`
+- `HarmbenchJudgeConfig`
+- `OpenAIReflectionConfig`
+
+### `catalog.py`
+`RuntimeCatalog` — single composition entrypoint:
+- `build_target_session(...)`
+- `build_adversary_session(...)`
+- `build_judge_session(...)`
+- `build_reflection_gateway(...)`
+
+### `local_hf_runtime.py`
+`LocalHFChatRuntime` — loads local Transformers model/tokenizer (optional 4-bit), freezes params, and implements `generate(...)` via chat template. Best for frozen target-model inference.
+
+### `unsloth_adversary_runtime.py`
+`UnslothAdversaryRuntime` — loads Unsloth model with LoRA, exposes `sample_policy(...)` with token logprob metadata and `save_adapters(...)` for checkpointing. Best for trainable adversary flows.
+
+### `harmbench_judge_runtime.py`
+`HarmbenchJudgeRuntime` — loads HarmBench classifier and implements `judge(...)` returning yes/no verdicts. Use for ASR-style scoring.
+
+### `openai_reflection_gateway.py`
+`OpenAIReflectionGateway` — OpenAI-compatible client with `verify(...)`, `smoke_test(...)`, and `bind_openai_env()` context manager. Use for frozen reflection model routing in GEPA runs.
+
+### `env.py`
+- `resolve_hf_token()`: resolves HF token from `HF_TOKEN` or `HUGGINGFACE_HUB_TOKEN`.
+- `scoped_env(...)`: temporary env var override context manager.
+
+### `evaluation.py`
+- `EvaluationConfig`, `EvaluationResult`
+- `evaluate_outputs(...)` supporting methods:
+  - `"heuristic"` — refusal-score based
+  - `"judge"` — HarmBench judge verdict based
+
+### `gepa_prompt_optimization.py`
+- `GepaPromptOptimizationConfig`
+- `GepaRefusalEvaluator` (callable evaluator class)
+- `run_gepa_prompt_optimization(...)`
+
+---
 
 ## Quick Start
-
-Typical setup pattern in a script:
-
 ```python
 from src.runtime import (
     RuntimeCatalog,
@@ -46,134 +112,44 @@ text = target_session.generate(
 )
 ```
 
-## File-by-File Overview
+---
 
-### `interfaces.py`
+## End-to-End Dataflow
 
-Core contracts:
+### CoEV path (`runs/coev_run.py`)
+1. Parse run config and resolve device.
+2. Build sessions via `RuntimeCatalog`: adversary (Unsloth+LoRA), target (local HF), judge (HarmBench).
+3. Load train/validation prompts via `load_harmbench_subset`.
+4. For each training step: adversary rewrites prompt → target generates defended answer → judge computes reward/ASR → optimizer updates adversary policy.
+5. Persist CSV logs, optional adapters, and `RunManifest`.
 
-- `GenerationRequest`: normalized single-turn chat generation input.
-- `TargetRuntime`: protocol with `generate(...)`.
-- `JudgeRuntime`: protocol with `judge(...)`.
-- `ReflectionGateway`: protocol with `verify(...)`, `smoke_test(...)`.
-- `LoRABridge`: protocol for adapter persistence (`save_adapters(...)`).
-- `GenerationSession`: lightweight wrapper around a runtime object; exposes:
-  - `generate(...)`
-  - `judge(...)`
+### GEPA path (`runs/gepa_run.py`)
+1. Parse run config and resolve device.
+2. Load HarmBench train/val data.
+3. Build target session, optional judge session, and reflection gateway.
+4. Evaluate baseline system prompt via shared evaluation helpers.
+5. Run `run_gepa_prompt_optimization(...)` to produce candidate prompts.
+6. Evaluate best candidate and save metrics/tables/plots/manifest.
 
-Use this when you want a consistent call surface from scripts.
+---
 
-### `config.py`
+## Implementation Guidance
 
-Dataclasses for runtime construction:
+- Prefer importing from the package root: `from src.runtime import ...`, `from src.data import ...`, `from src.evaluators import ...`
+- Keep runtime objects long-lived — construct once per run.
+- Keep evaluation method selection centralized through `EvaluationConfig`.
+- When adding a backend, implement it in `src/runtime/` and register it in `RuntimeCatalog` rather than branching in run scripts.
+- Preserve backward-compatible CLI flags in `runs/` where practical; map old flags to new implementations internally.
 
-- `LocalHFConfig`
-- `UnslothAdversaryConfig`
-- `HarmbenchJudgeConfig`
-- `OpenAIReflectionConfig`
+## Extending the System
 
-Use these as inputs to `RuntimeCatalog`.
+1. Create a new script in `runs/` for orchestration only.
+2. Reuse `load_harmbench_subset`, `evaluate_outputs`, and runtime sessions.
+3. Add new shared behavior to `src/` only if at least one existing pipeline can also reuse it.
+4. Emit a `RunManifest` via `write_run_manifest` for consistency across runs.
 
-### `catalog.py`
+## What Belongs Where
 
-`RuntimeCatalog` is the composition entrypoint:
+**Keep in `src/runtime/`:** model bootstrapping, generation logic, evaluation aggregation, environment/token handling, GEPA/refusal evaluators.
 
-- `build_target_session(...)`
-- `build_adversary_session(...)`
-- `build_judge_session(...)`
-- `build_reflection_gateway(...)`
-
-Scripts should generally construct runtime objects through this catalog.
-
-### `local_hf_runtime.py`
-
-`LocalHFChatRuntime`:
-
-- Loads local Transformers model/tokenizer (optional 4-bit).
-- Freezes model params for inference.
-- Implements `generate(...)` using chat template + `model.generate`.
-
-Best for frozen target-model inference in experiments.
-
-### `unsloth_adversary_runtime.py`
-
-`UnslothAdversaryRuntime`:
-
-- Loads Unsloth model and attaches LoRA.
-- Exposes `sample_policy(...)` with token logprob metadata.
-- Exposes `save_adapters(...)` for adapter checkpointing.
-
-Best for trainable adversary flows (`runs/coev_run.py` style).
-
-### `harmbench_judge_runtime.py`
-
-`HarmbenchJudgeRuntime`:
-
-- Loads HarmBench classifier model/tokenizer.
-- Implements `judge(...)` returning yes/no classifier completions.
-
-Use this for ASR-style scoring where HarmBench judge is required.
-
-### `openai_reflection_gateway.py`
-
-`OpenAIReflectionGateway`:
-
-- Creates OpenAI-compatible client.
-- `verify(...)` checks endpoint + model availability.
-- `smoke_test(...)` does a quick completion sanity check.
-- `bind_openai_env()` context manager temporarily routes global OpenAI env vars.
-
-Use this for frozen reflection model routing during GEPA runs.
-
-### `env.py`
-
-Shared environment utilities:
-
-- `resolve_hf_token()`: resolves HF token from `HF_TOKEN` or `HUGGINGFACE_HUB_TOKEN`.
-- `scoped_env(...)`: temporary env var override context manager.
-
-Use this instead of re-implementing env logic in scripts.
-
-### `evaluation.py`
-
-Reusable output scoring:
-
-- `EvaluationConfig`
-- `EvaluationResult`
-- `evaluate_outputs(...)` with methods:
-  - `"heuristic"` (refusal-score based)
-  - `"judge"` (HarmBench judge verdict based)
-
-Use this when you want consistent metrics across pipelines.
-
-### `gepa_prompt_optimization.py`
-
-Reusable GEPA optimization pieces:
-
-- `GepaPromptOptimizationConfig`
-- `GepaRefusalEvaluator` (callable evaluator class)
-- `run_gepa_prompt_optimization(...)`
-
-Use this when integrating GEPA in any pipeline without rewriting evaluator/config plumbing.
-
-## Recommended Usage Pattern
-
-1. Keep script-level `main()` as orchestration only:
-   - parse args
-   - load data
-   - construct runtime sessions/gateways
-   - call runtime helpers
-   - save artifacts
-2. Put reusable mechanics into this runtime package.
-3. Avoid moving experiment-specific policy logic that is unique to one script.
-
-## What Not To Move Here
-
-Keep script-specific central logic in experiment files, for example:
-
-- CoEV stage scheduling and update strategy.
-- Script-specific artifact/report structure.
-- Pipeline-specific branching semantics and CLI contracts.
-
-This runtime package should hold reusable building blocks, not own each experiment's full control flow.
-
+**Keep in `runs/` scripts:** CoEV stage scheduling and update strategy, script-specific artifact/report structure, pipeline-specific branching semantics and CLI contracts.
