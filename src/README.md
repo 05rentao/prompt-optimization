@@ -54,7 +54,23 @@ uv run runs/coev_run.py --help
 uv run runs/coev_v2_run.py --help
 ```
 
-### 5) Minimal runtime wiring example
+### 5) Best way to run scripts
+
+Use `configs/default.yaml` as the source of truth for stable runtime values (model IDs, reflection endpoint, runtime profile). Override only experiment controls on CLI.
+
+```bash
+# Recommended: use the unified wrapper.
+uv run scripts/run_unified_experiment.py --mode mark
+uv run scripts/run_unified_experiment.py --mode coev --coev-mode reinforce
+uv run scripts/run_unified_experiment.py --mode coev_v2 --coev-v2-mode coev
+
+# Direct script runs (when developing one pipeline):
+uv run runs/gepa_run.py --show-progress
+uv run runs/coev_run.py --mode reinforce
+uv run runs/coev_v2_run.py --mode coev
+```
+
+### 6) Minimal runtime wiring example
 
 ```python
 from src.runtime import (
@@ -267,8 +283,6 @@ Single runtime composition entrypoint:
 uv run runs/coev_v2_run.py \
   --mode coev \
   --dataset-name walledai/HarmBench \
-  --reflection-model-name meta-llama/Llama-3.1-8B-Instruct \
-  --reflection-vllm-base-url http://127.0.0.1:8001/v1 \
   --max-metric-calls 80 \
   --stages 2 \
   --iters-per-stage 5 \

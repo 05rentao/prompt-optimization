@@ -11,6 +11,7 @@ from .config import (
     TargetModelConfig,
     UnslothAdversaryConfig,
 )
+from .defaults import load_default_config
 from .env import resolve_hf_token, scoped_env
 from .evaluation import EvaluationBatchResult, EvaluationConfig, EvaluatedSample, EvaluationResult, evaluate_examples, evaluate_outputs
 from .gepa_prompt_optimization import (
@@ -51,6 +52,7 @@ __all__ = [
     "DualRoleGepaOptimizationResult",
     "run_gepa_prompt_optimization",
     "run_dual_role_gepa_prompt_optimization",
+    "load_default_config",
     "resolve_hf_token",
     "scoped_env",
 ]

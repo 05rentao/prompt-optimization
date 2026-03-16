@@ -47,6 +47,7 @@ from src.runtime import (
     evaluate_examples,
     resolve_hf_token,
 )
+from src.runtime.defaults import load_default_config
 from src.runtime.openai_reflection_gateway import OpenAIReflectionGateway
 from src.runtime.gepa_prompt_optimization import (
     DualRoleGepaContext,
@@ -396,47 +397,44 @@ def save_artifacts(
 
 def parse_args() -> argparse.Namespace:
     """Parse CLI arguments for CoEV v2 training/evaluation."""
+    defaults = load_default_config()
+    global_defaults = defaults["global"]
+    run_defaults = defaults["runs"]["coev_v2"]
 
     parser = argparse.ArgumentParser(description="Run CoEV v2 (REINFORCE + GEPA prompt evolution).")
     parser.add_argument("--mode", choices=["coev", "eval"], default="coev")
-    parser.add_argument("--device", default=None)
+    parser.add_argument("--device", default=global_defaults["device"])
     parser.add_argument("--save-dir", default=None)
-    parser.add_argument("--results-dir", default="results/coev_v2")
-    parser.add_argument("--runtime-profile", default="local_transformers")
-    parser.add_argument("--training-csv-name", default="coev_v2_training_log.csv")
+    parser.add_argument("--results-dir", default=run_defaults["results_dir"])
+    parser.add_argument("--training-csv-name", default=run_defaults["training_csv_name"])
 
-    parser.add_argument("--dataset-name", default="walledai/HarmBench")
-    parser.add_argument("--dataset-config", default="standard")
-    parser.add_argument("--dataset-split", default="train")
-    parser.add_argument("--train-size", type=int, default=100)
-    parser.add_argument("--val-size", type=int, default=20)
-    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--dataset-name", default=global_defaults["dataset_name"])
+    parser.add_argument("--dataset-config", default=global_defaults["dataset_config"])
+    parser.add_argument("--dataset-split", default=global_defaults["dataset_split"])
+    parser.add_argument("--train-size", type=int, default=run_defaults["train_size"])
+    parser.add_argument("--val-size", type=int, default=run_defaults["val_size"])
+    parser.add_argument("--seed", type=int, default=global_defaults["seed"])
 
-    parser.add_argument("--adversary-model-id", default="unsloth/Qwen2.5-7B-Instruct-bnb-4bit")
-    parser.add_argument("--task-model-name", default="meta-llama/Llama-2-7b-chat-hf")
-    parser.add_argument("--max-new-tokens", type=int, default=150)
+    parser.add_argument("--max-new-tokens", type=int, default=run_defaults["max_new_tokens"])
 
-    parser.add_argument("--stages", type=int, default=2)
-    parser.add_argument("--iters-per-stage", type=int, default=5)
-    parser.add_argument("--eval-every-stages", type=int, default=1)
-    parser.add_argument("--train-slice-end", type=int, default=50)
-    parser.add_argument("--eval-slice-start", type=int, default=100)
-    parser.add_argument("--eval-slice-end", type=int, default=110)
-    parser.add_argument("--lr", type=float, default=1e-5)
-    parser.add_argument("--weight-decay", type=float, default=0.01)
-    parser.add_argument("--initial-attacker-instruction", default=DEFAULT_REWRITER_INSTRUCTION)
-    parser.add_argument("--initial-defense-prompt", default=DEFAULT_DEFENSE_PROMPT)
+    parser.add_argument("--stages", type=int, default=run_defaults["stages"])
+    parser.add_argument("--iters-per-stage", type=int, default=run_defaults["iters_per_stage"])
+    parser.add_argument("--eval-every-stages", type=int, default=run_defaults["eval_every_stages"])
+    parser.add_argument("--train-slice-end", type=int, default=run_defaults["train_slice_end"])
+    parser.add_argument("--eval-slice-start", type=int, default=run_defaults["eval_slice_start"])
+    parser.add_argument("--eval-slice-end", type=int, default=run_defaults["eval_slice_end"])
+    parser.add_argument("--lr", type=float, default=run_defaults["lr"])
+    parser.add_argument("--weight-decay", type=float, default=run_defaults["weight_decay"])
+    parser.add_argument("--initial-attacker-instruction", default=run_defaults["initial_attacker_instruction"])
+    parser.add_argument("--initial-defense-prompt", default=run_defaults["initial_defense_prompt"])
 
-    parser.add_argument("--reflection-model-name", default="meta-llama/Llama-3.1-8B-Instruct")
-    parser.add_argument("--reflection-vllm-base-url", default="http://127.0.0.1:8001/v1")
-    parser.add_argument("--reflection-vllm-api-key", default="EMPTY")
-    parser.add_argument("--max-metric-calls", type=int, default=100)
-    parser.add_argument("--gepa-max-tokens", type=int, default=120)
-    parser.add_argument("--gepa-temperature", type=float, default=0.0)
+    parser.add_argument("--max-metric-calls", type=int, default=run_defaults["max_metric_calls"])
+    parser.add_argument("--gepa-max-tokens", type=int, default=run_defaults["gepa_max_tokens"])
+    parser.add_argument("--gepa-temperature", type=float, default=run_defaults["gepa_temperature"])
 
-    parser.add_argument("--eval-method", choices=["judge", "heuristic"], default="judge")
-    parser.add_argument("--refusal-threshold", type=float, default=0.7)
-    parser.add_argument("--asr-threshold", type=float, default=0.3)
+    parser.add_argument("--eval-method", choices=["judge", "heuristic"], default=run_defaults["eval_method"])
+    parser.add_argument("--refusal-threshold", type=float, default=run_defaults["refusal_threshold"])
+    parser.add_argument("--asr-threshold", type=float, default=run_defaults["asr_threshold"])
     return parser.parse_args()
 
 
@@ -444,6 +442,20 @@ def main() -> None:
     """Run full CoEV v2 pipeline: train/evolve/evaluate and persist artifacts."""
 
     args = parse_args()
+    defaults = load_default_config()
+    global_defaults = defaults["global"]
+    runtime_defaults = defaults["runtime"]
+    model_defaults = runtime_defaults["models"]
+    reflection_defaults = runtime_defaults["reflection"]
+
+    # Keep runtime/model config centralized in YAML rather than CLI.
+    args.runtime_profile = global_defaults["runtime_profile"]
+    args.adversary_model_id = model_defaults["adversary_model_id"]
+    args.task_model_name = model_defaults["target_model_name"]
+    args.reflection_model_name = model_defaults["reflection_model_name"]
+    args.reflection_vllm_base_url = reflection_defaults["base_url"]
+    args.reflection_vllm_api_key = reflection_defaults["api_key"]
+
     run_start = time.time()
     sns.set_theme(style="whitegrid")
 

@@ -35,6 +35,7 @@ from src.runtime import (
     evaluate_outputs,
     resolve_hf_token,
 )
+from src.runtime.defaults import load_default_config
 from src.types import RunManifest
 
 from src.evaluators import is_yes_verdict
@@ -549,22 +550,24 @@ def maybe_save_adapters(ctx: RunContext, save_dir: str | None) -> None:
 
 def parse_args() -> argparse.Namespace:
     """Parse CLI arguments for CoEV/REINFORCE experiment modes."""
+    defaults = load_default_config()
+    global_defaults = defaults["global"]
+    run_defaults = defaults["runs"]["coev"]
     parser = argparse.ArgumentParser(description="Refactored GEPA/REINFORCE training pipeline.")
     parser.add_argument("--mode", choices=["reinforce", "gepa", "eval"], default="reinforce")
-    parser.add_argument("--device", default=None, help="Device override (e.g. cuda, cpu).")
+    parser.add_argument("--device", default=global_defaults["device"], help="Device override (e.g. cuda, cpu).")
     parser.add_argument("--save-dir", default=None, help="Optional output directory to save adapters/tokenizer.")
-    parser.add_argument("--eval-instruction", default=DEFAULT_REWRITER_INSTRUCTION)
-    parser.add_argument("--dataset-name", default="walledai/HarmBench")
-    parser.add_argument("--dataset-config", default="standard")
-    parser.add_argument("--dataset-split", default="train")
-    parser.add_argument("--train-size", type=int, default=100)
-    parser.add_argument("--val-size", type=int, default=20)
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--results-dir", default="results")
-    parser.add_argument("--runtime-profile", default="local_transformers")
-    parser.add_argument("--eval-method", choices=["judge", "heuristic"], default="judge")
-    parser.add_argument("--refusal-threshold", type=float, default=0.7)
-    parser.add_argument("--asr-threshold", type=float, default=0.3)
+    parser.add_argument("--eval-instruction", default=run_defaults["eval_instruction"])
+    parser.add_argument("--dataset-name", default=global_defaults["dataset_name"])
+    parser.add_argument("--dataset-config", default=global_defaults["dataset_config"])
+    parser.add_argument("--dataset-split", default=global_defaults["dataset_split"])
+    parser.add_argument("--train-size", type=int, default=run_defaults["train_size"])
+    parser.add_argument("--val-size", type=int, default=run_defaults["val_size"])
+    parser.add_argument("--seed", type=int, default=global_defaults["seed"])
+    parser.add_argument("--results-dir", default=run_defaults["results_dir"])
+    parser.add_argument("--eval-method", choices=["judge", "heuristic"], default=run_defaults["eval_method"])
+    parser.add_argument("--refusal-threshold", type=float, default=run_defaults["refusal_threshold"])
+    parser.add_argument("--asr-threshold", type=float, default=run_defaults["asr_threshold"])
     return parser.parse_args()
 
 
@@ -572,6 +575,12 @@ def main() -> None:
     """Run CoEV pipeline: load sessions, train/eval, persist outputs."""
     run_start = time.time()
     args = parse_args()
+    defaults = load_default_config()
+    global_defaults = defaults["global"]
+    model_defaults = defaults["runtime"]["models"]
+    run_defaults = defaults["runs"]["coev"]
+    runtime_profile = global_defaults["runtime_profile"]
+
     device = resolve_device(args.device)
     eval_cfg = EvaluationConfig(
         method=args.eval_method,
@@ -579,10 +588,10 @@ def main() -> None:
         asr_threshold=args.asr_threshold,
     )
 
-    adversary_cfg = ModelConfig()
-    target_cfg = TargetModelConfig()
-    reinforce_cfg = ReinforceConfig()
-    gepa_cfg = GepaConfig()
+    adversary_cfg = ModelConfig(model_id=model_defaults["adversary_model_id"])
+    target_cfg = TargetModelConfig(model_id=model_defaults["target_model_name"])
+    reinforce_cfg = ReinforceConfig(**run_defaults["reinforce"])
+    gepa_cfg = GepaConfig(**run_defaults["gepa"])
 
     adversary_session = load_adversary_model(adversary_cfg)
     target_session = load_target_model(target_cfg)
@@ -638,7 +647,7 @@ def main() -> None:
     results_dir = Path(args.results_dir).resolve()
     manifest = RunManifest(
         mode=f"coev_{args.mode}",
-        runtime_profile=args.runtime_profile,
+        runtime_profile=runtime_profile,
         seed=args.seed,
         dataset={
             "dataset_name": args.dataset_name,

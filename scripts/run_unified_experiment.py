@@ -17,6 +17,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from src.runtime.defaults import load_default_config
+
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MARK_SCRIPT = REPO_ROOT / "runs" / "gepa_run.py"
@@ -25,6 +27,11 @@ COEV_V2_SCRIPT = REPO_ROOT / "runs" / "coev_v2_run.py"
 
 
 def parse_args() -> argparse.Namespace:
+    defaults = load_default_config()
+    global_defaults = defaults["global"]
+    run_defaults = defaults["runs"]
+    unified_defaults = defaults["scripts"]["unified_runner"]
+
     parser = argparse.ArgumentParser(description="Unified CoEV/Mark experiment runner.")
     parser.add_argument("--mode", choices=["mark", "coev", "coev_v2", "hybrid"], required=True)
     parser.add_argument(
@@ -33,39 +40,32 @@ def parse_args() -> argparse.Namespace:
         default="mark_then_coev",
         help="Execution order when mode=hybrid.",
     )
-    parser.add_argument("--runtime-profile", default="dual_vllm")
 
     # Shared dataset defaults.
-    parser.add_argument("--dataset-name", default="walledai/HarmBench")
-    parser.add_argument("--dataset-config", default="standard")
-    parser.add_argument("--dataset-split", default="train")
-    parser.add_argument("--train-size", type=int, default=100)
-    parser.add_argument("--val-size", type=int, default=100)
-    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--dataset-name", default=global_defaults["dataset_name"])
+    parser.add_argument("--dataset-config", default=global_defaults["dataset_config"])
+    parser.add_argument("--dataset-split", default=global_defaults["dataset_split"])
+    parser.add_argument("--train-size", type=int, default=run_defaults["gepa"]["train_size"])
+    parser.add_argument("--val-size", type=int, default=run_defaults["gepa"]["val_size"])
+    parser.add_argument("--seed", type=int, default=global_defaults["seed"])
 
     # Mark-specific defaults.
-    parser.add_argument("--task-model-name", default="Qwen/Qwen2.5-3B-Instruct")
-    parser.add_argument("--reflection-model-name", default="meta-llama/Llama-3.1-8B-Instruct")
-    parser.add_argument("--vllm-base-url", default="http://127.0.0.1:8000/v1")
-    parser.add_argument("--vllm-api-key", default="EMPTY")
-    parser.add_argument("--reflection-vllm-base-url", default="http://127.0.0.1:8001/v1")
-    parser.add_argument("--reflection-vllm-api-key", default="EMPTY")
-    parser.add_argument("--max-metric-calls", type=int, default=300)
-    parser.add_argument("--max-tokens", type=int, default=256)
-    parser.add_argument("--temperature", type=float, default=0.0)
-    parser.add_argument("--mark-results-dir", default="results/mark")
+    parser.add_argument("--max-metric-calls", type=int, default=run_defaults["gepa"]["max_metric_calls"])
+    parser.add_argument("--max-tokens", type=int, default=run_defaults["gepa"]["max_tokens"])
+    parser.add_argument("--temperature", type=float, default=run_defaults["gepa"]["temperature"])
+    parser.add_argument("--mark-results-dir", default=unified_defaults["mark_results_dir"])
     parser.add_argument("--mark-extra-args", default="")
 
     # CoEV-specific defaults.
     parser.add_argument("--coev-mode", choices=["reinforce", "gepa", "eval"], default="reinforce")
     parser.add_argument("--coev-v2-mode", choices=["coev", "eval"], default=None)
-    parser.add_argument("--device", default=None)
-    parser.add_argument("--coev-results-dir", default="results/coev")
+    parser.add_argument("--device", default=global_defaults["device"])
+    parser.add_argument("--coev-results-dir", default=unified_defaults["coev_results_dir"])
     parser.add_argument("--save-dir", default=None)
     parser.add_argument("--eval-instruction", default=None)
-    parser.add_argument("--eval-method", choices=["judge", "heuristic"], default="judge")
-    parser.add_argument("--refusal-threshold", type=float, default=0.7)
-    parser.add_argument("--asr-threshold", type=float, default=0.3)
+    parser.add_argument("--eval-method", choices=["judge", "heuristic"], default=run_defaults["coev"]["eval_method"])
+    parser.add_argument("--refusal-threshold", type=float, default=run_defaults["coev"]["refusal_threshold"])
+    parser.add_argument("--asr-threshold", type=float, default=run_defaults["coev"]["asr_threshold"])
     parser.add_argument("--coev-extra-args", default="")
     return parser.parse_args()
 
@@ -91,26 +91,12 @@ def build_mark_command(args: argparse.Namespace) -> list[str]:
         str(args.val_size),
         "--seed",
         str(args.seed),
-        "--task-model-name",
-        args.task_model_name,
-        "--reflection-model-name",
-        args.reflection_model_name,
-        "--vllm-base-url",
-        args.vllm_base_url,
-        "--vllm-api-key",
-        args.vllm_api_key,
-        "--reflection-vllm-base-url",
-        args.reflection_vllm_base_url,
-        "--reflection-vllm-api-key",
-        args.reflection_vllm_api_key,
         "--max-metric-calls",
         str(args.max_metric_calls),
         "--max-tokens",
         str(args.max_tokens),
         "--temperature",
         str(args.temperature),
-        "--runtime-profile",
-        args.runtime_profile,
         "--results-dir",
         args.mark_results_dir,
         "--show-progress",
@@ -138,8 +124,6 @@ def build_coev_command(args: argparse.Namespace) -> list[str]:
         str(args.val_size),
         "--seed",
         str(args.seed),
-        "--runtime-profile",
-        args.runtime_profile,
         "--results-dir",
         args.coev_results_dir,
         "--eval-method",
@@ -183,16 +167,8 @@ def build_coev_v2_command(args: argparse.Namespace) -> list[str]:
         str(args.val_size),
         "--seed",
         str(args.seed),
-        "--runtime-profile",
-        args.runtime_profile,
         "--results-dir",
         args.coev_results_dir,
-        "--reflection-model-name",
-        args.reflection_model_name,
-        "--reflection-vllm-base-url",
-        args.reflection_vllm_base_url,
-        "--reflection-vllm-api-key",
-        args.reflection_vllm_api_key,
         "--max-metric-calls",
         str(args.max_metric_calls),
         "--max-new-tokens",

@@ -52,6 +52,7 @@ from src.runtime import (
     run_gepa_prompt_optimization,
     resolve_hf_token,
 )
+from src.runtime.defaults import load_default_config
 from src.runtime.openai_reflection_gateway import OpenAIReflectionGateway
 from src.types import RunManifest
 
@@ -70,38 +71,30 @@ def resolve_device(device_override: str | None) -> str:
 
 def parse_args() -> argparse.Namespace:
     """Parse CLI arguments for the Mark GEPA optimization pipeline."""
+    defaults = load_default_config()
+    global_defaults = defaults["global"]
+    run_defaults = defaults["runs"]["gepa"]
     parser = argparse.ArgumentParser(description="Run GEPA optimization for HarmBench safety prompt tuning.")
-    parser.add_argument("--dataset-name", default="walledai/HarmBench")
-    parser.add_argument("--dataset-config", default="standard")
-    parser.add_argument("--dataset-split", default="train")
-    parser.add_argument("--train-size", type=int, default=100)
-    parser.add_argument("--val-size", type=int, default=100)
-    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--dataset-name", default=global_defaults["dataset_name"])
+    parser.add_argument("--dataset-config", default=global_defaults["dataset_config"])
+    parser.add_argument("--dataset-split", default=global_defaults["dataset_split"])
+    parser.add_argument("--train-size", type=int, default=run_defaults["train_size"])
+    parser.add_argument("--val-size", type=int, default=run_defaults["val_size"])
+    parser.add_argument("--seed", type=int, default=global_defaults["seed"])
 
-    # Keep this arg name for compatibility with current launchers/unified runner.
-    parser.add_argument("--task-model-name", default="meta-llama/Llama-2-7b-chat-hf")
-    parser.add_argument("--reflection-model-name", default="meta-llama/Llama-3.1-8B-Instruct")
-    parser.add_argument("--reflection-vllm-base-url", default="http://127.0.0.1:8001/v1")
-    parser.add_argument("--reflection-vllm-api-key", default="EMPTY")
+    parser.add_argument("--device", default=global_defaults["device"], help="Device override (e.g. cuda, cpu).")
 
-    # Kept as compatibility args; no longer used for target inference path.
-    parser.add_argument("--vllm-base-url", default="http://127.0.0.1:8000/v1")
-    parser.add_argument("--vllm-api-key", default="EMPTY")
-
-    parser.add_argument("--device", default=None, help="Device override (e.g. cuda, cpu).")
-
-    parser.add_argument("--max-metric-calls", type=int, default=300)
-    parser.add_argument("--max-tokens", type=int, default=256)
-    parser.add_argument("--temperature", type=float, default=0.0)
+    parser.add_argument("--max-metric-calls", type=int, default=run_defaults["max_metric_calls"])
+    parser.add_argument("--max-tokens", type=int, default=run_defaults["max_tokens"])
+    parser.add_argument("--temperature", type=float, default=run_defaults["temperature"])
     parser.add_argument("--show-progress", action="store_true")
-    parser.add_argument("--runtime-profile", default="local_transformers")
-    parser.add_argument("--eval-method", choices=["heuristic", "judge"], default="heuristic")
-    parser.add_argument("--refusal-threshold", type=float, default=0.7)
-    parser.add_argument("--asr-threshold", type=float, default=0.3)
+    parser.add_argument("--eval-method", choices=["heuristic", "judge"], default=run_defaults["eval_method"])
+    parser.add_argument("--refusal-threshold", type=float, default=run_defaults["refusal_threshold"])
+    parser.add_argument("--asr-threshold", type=float, default=run_defaults["asr_threshold"])
 
-    parser.add_argument("--baseline-system-prompt", default=DEFAULT_BASELINE_SYSTEM_PROMPT)
+    parser.add_argument("--baseline-system-prompt", default=run_defaults["baseline_system_prompt"])
     parser.add_argument("--root-dir", default=str(Path.cwd()))
-    parser.add_argument("--results-dir", default=None)
+    parser.add_argument("--results-dir", default=run_defaults["results_dir"])
     return parser.parse_args()
 
 
@@ -115,10 +108,10 @@ def load_target_model(cfg: TargetModelConfig) -> GenerationSession:
     return RuntimeCatalog.build_target_session(runtime_cfg)
 
 
-def verify_reflection_client(args: argparse.Namespace, reflection_gateway: OpenAIReflectionGateway) -> None:
+def verify_reflection_client(reflection_gateway: OpenAIReflectionGateway, reflection_model_name: str) -> None:
     """Validate reflection endpoint reachability and run a smoke prompt."""
-    reflection_gateway.verify(args.reflection_model_name)
-    reflection_smoke = reflection_gateway.smoke_test(args.reflection_model_name)
+    reflection_gateway.verify(reflection_model_name)
+    reflection_smoke = reflection_gateway.smoke_test(reflection_model_name)
     print("Reflection model smoke output:", reflection_smoke)
 
 
@@ -189,6 +182,9 @@ def run_gepa_optimization(
     args: argparse.Namespace,
     target_session: GenerationSession,
     reflection_gateway: OpenAIReflectionGateway,
+    target_model_name: str,
+    reflection_model_name: str,
+    reflection_base_url: str,
     device: str,
     train_data: List[Dict[str, Any]],
     val_data: List[Dict[str, Any]],
@@ -199,13 +195,13 @@ def run_gepa_optimization(
         max_metric_calls=args.max_metric_calls,
         max_tokens=args.max_tokens,
         temperature=args.temperature,
-        reflection_model_name=args.reflection_model_name,
+        reflection_model_name=reflection_model_name,
     )
 
     print("Starting GEPA optimization...")
-    print(f"Target model:      {args.task_model_name}")
-    print(f"Reflection model:  openai/{args.reflection_model_name}")
-    print(f"Reflection URL:    {args.reflection_vllm_base_url}")
+    print(f"Target model:      {target_model_name}")
+    print(f"Reflection model:  openai/{reflection_model_name}")
+    print(f"Reflection URL:    {reflection_base_url}")
     print(f"Budget:            {args.max_metric_calls} evaluator calls")
     result, optimizer_trace, run_seconds = run_gepa_prompt_optimization(
         cfg=optimization_cfg,
@@ -332,8 +328,20 @@ def save_artifacts(
 def main() -> None:
     """Run full Mark pipeline: load data, optimize, evaluate, and save outputs."""
     args = parse_args()
+    defaults = load_default_config()
+    global_defaults = defaults["global"]
+    runtime_defaults = defaults["runtime"]
+    model_defaults = runtime_defaults["models"]
+    reflection_defaults = runtime_defaults["reflection"]
+
+    target_model_name = model_defaults["target_model_name"]
+    reflection_model_name = model_defaults["reflection_model_name"]
+    reflection_base_url = reflection_defaults["base_url"]
+    reflection_api_key = reflection_defaults["api_key"]
+    runtime_profile = global_defaults["runtime_profile"]
+
     root_dir = Path(args.root_dir).resolve()
-    results_dir = Path(args.results_dir).resolve() if args.results_dir else root_dir / "results"
+    results_dir = Path(args.results_dir).resolve()
     results_dir.mkdir(parents=True, exist_ok=True)
     device = resolve_device(args.device)
 
@@ -355,7 +363,7 @@ def main() -> None:
     
     print(f"Loaded train={len(train_data)}, val={len(val_data)} from {args.dataset_name}:{args.dataset_split}")
 
-    target_cfg = TargetModelConfig(model_id=args.task_model_name, max_new_tokens=args.max_tokens)
+    target_cfg = TargetModelConfig(model_id=target_model_name, max_new_tokens=args.max_tokens)
     target_session = load_target_model(target_cfg)
     eval_cfg = EvaluationConfig(
         method=args.eval_method,
@@ -365,13 +373,13 @@ def main() -> None:
     judge_session = RuntimeCatalog.build_judge_session(HarmbenchJudgeConfig()) if args.eval_method == "judge" else None
     reflection_gateway = RuntimeCatalog.build_reflection_gateway(
         OpenAIReflectionConfig(
-            base_url=args.reflection_vllm_base_url,
-            api_key=args.reflection_vllm_api_key,
+            base_url=reflection_base_url,
+            api_key=reflection_api_key,
         )
     )
 
     # Reflection is still OpenAI-compatible vLLM.
-    verify_reflection_client(args, reflection_gateway)
+    verify_reflection_client(reflection_gateway, reflection_model_name)
 
     baseline_metrics, baseline_df = evaluate_system_prompt(
         system_prompt=args.baseline_system_prompt,
@@ -392,6 +400,9 @@ def main() -> None:
         args=args,
         target_session=target_session,
         reflection_gateway=reflection_gateway,
+        target_model_name=target_model_name,
+        reflection_model_name=reflection_model_name,
+        reflection_base_url=reflection_base_url,
         device=device,
         train_data=train_data,
         val_data=val_data,
@@ -426,9 +437,9 @@ def main() -> None:
     save_artifacts(  # save graphs, csvs etc.
         root_dir=root_dir,
         results_dir=results_dir,
-        target_model_name=args.task_model_name,
-        reflection_model_name=args.reflection_model_name,
-        reflection_vllm_base_url=args.reflection_vllm_base_url,
+        target_model_name=target_model_name,
+        reflection_model_name=reflection_model_name,
+        reflection_vllm_base_url=reflection_base_url,
         dataset_name=args.dataset_name,
         dataset_split=args.dataset_split,
         train_size=args.train_size,
@@ -444,7 +455,7 @@ def main() -> None:
         optimized_df=optimized_df,
         optimizer_trace=optimizer_trace,
         optimized_system_prompt=optimized_system_prompt,
-        runtime_profile=args.runtime_profile,
+        runtime_profile=runtime_profile,
     )
 
 
