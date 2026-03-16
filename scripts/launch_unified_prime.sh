@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+export PYTHONPATH="${PYTHONPATH:-}:."
+
 # Unified launcher for a single H100-80GB Prime instance.
 # Modes:
 #   - gepa:    start reflection vLLM endpoint, then run GEPA path

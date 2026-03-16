@@ -10,6 +10,9 @@ This module keeps the original workflow while removing notebook artifacts:
 
 from __future__ import annotations
 
+import unsloth
+from unsloth import FastLanguageModel
+
 import argparse
 import re
 import time

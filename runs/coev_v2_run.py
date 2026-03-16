@@ -8,6 +8,9 @@ similar to `src/runtime/gepa_prompt_optimization.py`.
 
 from __future__ import annotations
 
+import unsloth
+from unsloth import FastLanguageModel
+
 import argparse
 import time
 from dataclasses import dataclass

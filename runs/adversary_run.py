@@ -9,6 +9,7 @@ shared heuristic evaluator.
 
 from __future__ import annotations
 
+import unsloth
 from unsloth import FastLanguageModel
 
 import argparse

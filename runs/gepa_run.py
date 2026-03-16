@@ -14,6 +14,9 @@ keeping GEPA reflection on an OpenAI-compatible endpoint.
 
 from __future__ import annotations
 
+import unsloth
+from unsloth import FastLanguageModel
+
 import argparse
 import random
 import time

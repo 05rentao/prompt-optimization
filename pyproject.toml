@@ -23,12 +23,13 @@ dependencies = [
     "scikit-learn>=1.5.0",
     "gepa>=0.1.0",
     "requests>=2.32.5",
-    "vllm>=0.16.0",
+    "vllm==0.16.0",
     "pandas>=2.3.3",
     "hf-transfer>=0.1.9",
     "matplotlib>=3.10.8",
     "seaborn>=0.13.2",
     "litellm>=1.82.2",
+    "unsloth-zoo>=2026.3.2",
 ]
 
 [build-system]
