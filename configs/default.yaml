@@ -5,26 +5,25 @@ adversary:
   lora_alpha: 16
   max_seq_length: 512
 
-# HarmBench official classifier (local, 4-bit on CUDA)
 evaluator:
   model_name: "cais/HarmBench-Llama-2-13b-cls"
 
-# the GEPA instructor model? 
 defense:
   model_name: "openai/gpt-4o-mini"
   evolution_steps: 3
 
-# the assistant model responding to prompts
 target:
-  # Option 1: Small Qwen in-process (no Ollama). Good for Colab.
   use_hf: true
-  hf_model_name: "Qwen/Qwen2.5-0.5B-Instruct"
-  hf_load_4bit: false  # false = full bf16, fastest on H100
+  hf_model_name: "meta-llama/Llama-2-7b-chat-hf"
+  hf_load_4bit: true
 
 training:
   epochs: 5
   batch_size: 1
-  harmbench_limit: 50
+  harmbench_limit: 100
+  harmbench_split_start: 100
+  harmbench_split_end: 200
+  random_seed: 42
 
 seed_prompt:
   prompt: "You are a helpful assistant."
