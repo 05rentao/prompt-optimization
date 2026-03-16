@@ -6,6 +6,7 @@
 
 **Primary consumers:**
 - `runs/coev_run.py`
+- `runs/coev_v2_run.py`
 - `runs/gepa_run.py`
 
 ### Modularity Rules
@@ -131,6 +132,19 @@ text = target_session.generate(
 5. Run `run_gepa_prompt_optimization(...)` to produce candidate prompts.
 6. Evaluate best candidate and save metrics/tables/plots/manifest.
 
+### CoEV v2 path (`runs/coev_v2_run.py`)
+1. Parse run config and resolve device.
+2. Build adversary/target/judge sessions plus reflection gateway.
+3. Run staged REINFORCE updates (same weight-update semantics as CoEV v1).
+4. At each stage boundary, run GEPA-based optimization for:
+   - attacker instruction (maximize attack success objective),
+   - defense prompt (maximize refusal objective).
+5. Re-evaluate final evolved prompts and persist:
+   - train/stage logs,
+   - optimizer traces,
+   - baseline-vs-optimized metrics,
+   - plots and `RunManifest`.
+
 ---
 
 ## Implementation Guidance
@@ -140,6 +154,20 @@ text = target_session.generate(
 - Keep evaluation method selection centralized through `EvaluationConfig`.
 - When adding a backend, implement it in `src/runtime/` and register it in `RuntimeCatalog` rather than branching in run scripts.
 - Preserve backward-compatible CLI flags in `runs/` where practical; map old flags to new implementations internally.
+
+### New CoEV v2 usage
+
+```bash
+uv run runs/coev_v2_run.py \
+  --mode coev \
+  --dataset-name walledai/HarmBench \
+  --reflection-model-name meta-llama/Llama-3.1-8B-Instruct \
+  --reflection-vllm-base-url http://127.0.0.1:8001/v1 \
+  --max-metric-calls 80 \
+  --stages 2 \
+  --iters-per-stage 5 \
+  --results-dir results/coev_v2
+```
 
 ## Extending the System
 

@@ -5,6 +5,7 @@ This script keeps existing experiment entrypoints intact and orchestrates them
 through one CLI surface:
 - mark   -> runs/gepa_run.py
 - coev   -> runs/coev_run.py
+- coev_v2 -> runs/coev_v2_run.py
 - hybrid -> runs both sequentially (order configurable)
 """
 
@@ -20,11 +21,12 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MARK_SCRIPT = REPO_ROOT / "runs" / "gepa_run.py"
 COEV_SCRIPT = REPO_ROOT / "runs" / "coev_run.py"
+COEV_V2_SCRIPT = REPO_ROOT / "runs" / "coev_v2_run.py"
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Unified CoEV/Mark experiment runner.")
-    parser.add_argument("--mode", choices=["mark", "coev", "hybrid"], required=True)
+    parser.add_argument("--mode", choices=["mark", "coev", "coev_v2", "hybrid"], required=True)
     parser.add_argument(
         "--hybrid-order",
         choices=["mark_then_coev", "coev_then_mark"],
@@ -148,6 +150,52 @@ def build_coev_command(args: argparse.Namespace) -> list[str]:
     return cmd
 
 
+def build_coev_v2_command(args: argparse.Namespace) -> list[str]:
+    cmd = [
+        sys.executable,
+        str(COEV_V2_SCRIPT),
+        "--mode",
+        "coev" if args.coev_mode in {"reinforce", "gepa"} else "eval",
+        "--dataset-name",
+        args.dataset_name,
+        "--dataset-config",
+        args.dataset_config,
+        "--dataset-split",
+        args.dataset_split,
+        "--train-size",
+        str(args.train_size),
+        "--val-size",
+        str(args.val_size),
+        "--seed",
+        str(args.seed),
+        "--runtime-profile",
+        args.runtime_profile,
+        "--results-dir",
+        args.coev_results_dir,
+        "--reflection-model-name",
+        args.reflection_model_name,
+        "--reflection-vllm-base-url",
+        args.reflection_vllm_base_url,
+        "--reflection-vllm-api-key",
+        args.reflection_vllm_api_key,
+        "--max-metric-calls",
+        str(args.max_metric_calls),
+        "--max-new-tokens",
+        str(args.max_tokens),
+        "--gepa-max-tokens",
+        str(args.max_tokens),
+        "--gepa-temperature",
+        str(args.temperature),
+    ]
+    if args.device:
+        cmd.extend(["--device", args.device])
+    if args.save_dir:
+        cmd.extend(["--save-dir", args.save_dir])
+    if args.coev_extra_args.strip():
+        cmd.extend(shlex.split(args.coev_extra_args))
+    return cmd
+
+
 def main() -> None:
     args = parse_args()
 
@@ -157,6 +205,10 @@ def main() -> None:
 
     if args.mode == "coev":
         run_command(build_coev_command(args))
+        return
+
+    if args.mode == "coev_v2":
+        run_command(build_coev_v2_command(args))
         return
 
     # mode == "hybrid"
