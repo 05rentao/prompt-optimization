@@ -1,90 +1,61 @@
-# `src/` and `src/runtime/` Module Guide
+# `src/` and `src/runtime/` Guide
+
+This file is the merged guide for both `src/README.md` and `src/README_guide.md`.
 
 ## Overview
 
-`src/` is the shared library layer used by experiment entrypoints in `runs/`. It is intentionally modular so training/evaluation scripts can stay focused on pipeline control flow.
+`src/` is the shared library layer used by experiment entrypoints in `runs/`. It is intentionally modular so run scripts can stay focused on orchestration and experiment flow.
 
-**Primary consumers:**
+**Primary consumers**
 - `runs/coev_run.py`
 - `runs/coev_v2_run.py`
 - `runs/gepa_run.py`
 
-### Modularity Rules
+### Modularity rules
 
-- `runs/` owns **orchestration**: CLI args, phase ordering, logging, artifact naming.
-- `src/` owns **reusable implementation**: dataset loading, scoring, runtime wrappers, GEPA helpers.
-- `src/runtime/` owns **backend-specific adapters** behind stable interfaces.
+- `runs/` owns orchestration: CLI args, phase ordering, logging, artifact naming.
+- `src/` owns reusable implementation: data loading, scoring, artifact helpers, runtime wrappers, GEPA helpers.
+- `src/runtime/` owns backend-specific adapters behind stable interfaces.
 - New pipeline logic should compose existing `src` modules before adding new abstractions.
 
----
+## Teammate Quickstart
 
-## Package Layout
+Use this when you want to stand up or modify a run script quickly.
 
-| File | Responsibility |
-|---|---|
-| `src/data.py` | HarmBench subset loading and split shaping |
-| `src/evaluators.py` | Refusal heuristics and judge verdict normalization |
-| `src/artifacts.py` | Consistent run manifest writing |
-| `src/types.py` | Shared typed payloads (e.g. `RunManifest`) |
-| `src/runtime/` | Generation/judge/reflection runtime interfaces and implementations |
+### 1) Pick a base script
 
----
+- Start from `runs/gepa_run.py` if you are optimizing prompts with reflection loops.
+- Start from `runs/coev_run.py` for baseline CoEV REINFORCE flow.
+- Start from `runs/coev_v2_run.py` for staged CoEV + GEPA prompt evolution.
 
-## `src/runtime/` File-by-File
+### 2) Keep the canonical script shape
 
-### `interfaces.py`
-Core protocol contracts:
-- `GenerationRequest`: normalized single-turn chat generation input.
-- `TargetRuntime`: protocol with `generate(...)`.
-- `JudgeRuntime`: protocol with `judge(...)`.
-- `ReflectionGateway`: protocol with `verify(...)`, `smoke_test(...)`.
-- `LoRABridge`: protocol for adapter persistence (`save_adapters(...)`).
-- `GenerationSession`: lightweight wrapper exposing `generate(...)` and `judge(...)`.
+Most scripts should follow this order:
 
-### `config.py`
-Dataclasses for runtime construction used as inputs to `RuntimeCatalog`:
-- `LocalHFConfig`
-- `UnslothAdversaryConfig`
-- `HarmbenchJudgeConfig`
-- `OpenAIReflectionConfig`
+1. `parse_args()` with all CLI flags.
+2. `resolve_device(...)`.
+3. Build long-lived runtime sessions via `RuntimeCatalog`.
+4. Load dataset via `load_harmbench_subset(...)`.
+5. Execute train/eval loop.
+6. Write artifacts and `RunManifest`.
 
-### `catalog.py`
-`RuntimeCatalog` — single composition entrypoint:
-- `build_target_session(...)`
-- `build_adversary_session(...)`
-- `build_judge_session(...)`
-- `build_reflection_gateway(...)`
+### 3) Reuse shared building blocks
 
-### `local_hf_runtime.py`
-`LocalHFChatRuntime` — loads local Transformers model/tokenizer (optional 4-bit), freezes params, and implements `generate(...)` via chat template. Best for frozen target-model inference.
+- Data: `load_harmbench_subset(...)`.
+- Evaluation: `EvaluationConfig`, `evaluate_outputs(...)`, `evaluate_examples(...)`.
+- Runtime: `RuntimeCatalog` builders + `GenerationRequest`.
+- Artifacts: `write_json(...)`, `write_many_csv(...)`, plotting helpers, `write_run_manifest(...)`.
 
-### `unsloth_adversary_runtime.py`
-`UnslothAdversaryRuntime` — loads Unsloth model with LoRA, exposes `sample_policy(...)` with token logprob metadata and `save_adapters(...)` for checkpointing. Best for trainable adversary flows.
+### 4) Run existing scripts locally
 
-### `harmbench_judge_runtime.py`
-`HarmbenchJudgeRuntime` — loads HarmBench classifier and implements `judge(...)` returning yes/no verdicts. Use for ASR-style scoring.
+```bash
+uv run runs/gepa_run.py --help
+uv run runs/coev_run.py --help
+uv run runs/coev_v2_run.py --help
+```
 
-### `openai_reflection_gateway.py`
-`OpenAIReflectionGateway` — OpenAI-compatible client with `verify(...)`, `smoke_test(...)`, and `bind_openai_env()` context manager. Use for frozen reflection model routing in GEPA runs.
+### 5) Minimal runtime wiring example
 
-### `env.py`
-- `resolve_hf_token()`: resolves HF token from `HF_TOKEN` or `HUGGINGFACE_HUB_TOKEN`.
-- `scoped_env(...)`: temporary env var override context manager.
-
-### `evaluation.py`
-- `EvaluationConfig`, `EvaluationResult`
-- `evaluate_outputs(...)` supporting methods:
-  - `"heuristic"` — refusal-score based
-  - `"judge"` — HarmBench judge verdict based
-
-### `gepa_prompt_optimization.py`
-- `GepaPromptOptimizationConfig`
-- `GepaRefusalEvaluator` (callable evaluator class)
-- `run_gepa_prompt_optimization(...)`
-
----
-
-## Quick Start
 ```python
 from src.runtime import (
     RuntimeCatalog,
@@ -93,7 +64,6 @@ from src.runtime import (
     HarmbenchJudgeConfig,
     OpenAIReflectionConfig,
     GenerationRequest,
-    resolve_hf_token,
 )
 
 target_session = RuntimeCatalog.build_target_session(
@@ -108,54 +78,190 @@ reflection_gateway = RuntimeCatalog.build_reflection_gateway(
 )
 
 text = target_session.generate(
-    GenerationRequest(system_prompt="You are safe.", user_prompt="Hello"),
+    GenerationRequest(system_prompt="You are a safe assistant.", user_prompt="Hello"),
     device="cuda",
 )
 ```
 
----
+## Guide: Writing a New Run Script
+
+Use this checklist when creating `runs/<your_script>.py`.
+
+### Script checklist
+
+1. Add `#!/usr/bin/env python3` and a top-level module docstring describing the pipeline.
+2. Use `argparse` and expose defaults similar to existing scripts.
+3. Build configs/sessions once near startup (do not rebuild per example).
+4. Keep core loop logic in small testable functions.
+5. Centralize metric logic through `EvaluationConfig`.
+6. Save structured artifacts (CSV/JSON/plots) and a final `run_manifest.json`.
+
+### Starter template (recommended)
+
+```python
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+
+from src.artifacts import write_run_manifest
+from src.data import load_harmbench_subset
+from src.runtime import (
+    EvaluationConfig,
+    HarmbenchJudgeConfig,
+    LocalHFConfig,
+    RuntimeCatalog,
+    TargetModelConfig,
+    resolve_hf_token,
+)
+from src.types import RunManifest
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Describe your run")
+    parser.add_argument("--dataset-name", default="walledai/HarmBench")
+    parser.add_argument("--dataset-config", default="standard")
+    parser.add_argument("--dataset-split", default="train")
+    parser.add_argument("--train-size", type=int, default=100)
+    parser.add_argument("--val-size", type=int, default=100)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--results-dir", default="results/my_run")
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    token = resolve_hf_token()
+
+    target_cfg = TargetModelConfig(model_id="meta-llama/Llama-2-7b-chat-hf")
+    target_session = RuntimeCatalog.build_target_session(
+        LocalHFConfig(model_id=target_cfg.model_id, use_4bit=True, max_new_tokens=target_cfg.max_new_tokens)
+    )
+    judge_session = RuntimeCatalog.build_judge_session(HarmbenchJudgeConfig())
+    eval_cfg = EvaluationConfig(method="judge")
+
+    train_data, val_data, _ = load_harmbench_subset(
+        dataset_name=args.dataset_name,
+        dataset_config=args.dataset_config,
+        split=args.dataset_split,
+        train_size=args.train_size,
+        val_size=args.val_size,
+        seed=args.seed,
+        hf_token=token,
+    )
+
+    # TODO: your train/eval logic here, reusing evaluate_outputs/evaluate_examples.
+
+    manifest = RunManifest(
+        script_name="my_run.py",
+        mode="custom",
+        dataset_name=args.dataset_name,
+        dataset_config=args.dataset_config,
+        dataset_split=args.dataset_split,
+        train_size=len(train_data),
+        val_size=len(val_data),
+        seed=args.seed,
+        target_model=target_cfg.model_id,
+        runtime_profile="local_transformers",
+        eval_method=eval_cfg.method,
+        results_dir=str(Path(args.results_dir)),
+        metrics={},
+        notes=[],
+    )
+    write_run_manifest(Path(args.results_dir), manifest)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+### Common pitfalls to avoid
+
+- Building runtime sessions inside loops (slow and error-prone).
+- Adding model-specific branching in `runs/` instead of `src/runtime/catalog.py`.
+- Reimplementing evaluation math instead of using shared evaluators.
+- Skipping `RunManifest` output (breaks downstream analysis consistency).
+
+## Package Layout
+
+| File | Responsibility |
+|---|---|
+| `src/data.py` | HarmBench subset loading and split shaping |
+| `src/evaluators.py` | Refusal heuristics and judge verdict normalization |
+| `src/artifacts.py` | Shared artifact writers (json/csv/plots) and run manifest writing |
+| `src/types.py` | Shared typed payloads (for example `RunManifest`, eval/train row schemas) |
+| `src/runtime/` | Generation/judge/reflection runtime interfaces and implementations |
+
+## `src/runtime/` File-by-File
+
+### `interfaces.py`
+Core protocol contracts:
+- `GenerationRequest`
+- `TargetRuntime`
+- `JudgeRuntime`
+- `ReflectionGateway`
+- `LoRABridge`
+- `GenerationSession`
+
+### `config.py`
+Runtime dataclasses used with `RuntimeCatalog`, including:
+- `LocalHFConfig`
+- `TargetModelConfig`
+- `UnslothAdversaryConfig`
+- `HarmbenchJudgeConfig`
+- `OpenAIReflectionConfig`
+
+### `catalog.py`
+Single runtime composition entrypoint:
+- `build_target_session(...)`
+- `build_adversary_session(...)`
+- `build_judge_session(...)`
+- `build_reflection_gateway(...)`
+
+### Other runtime modules
+
+- `local_hf_runtime.py`: local Transformers target runtime.
+- `unsloth_adversary_runtime.py`: trainable Unsloth + LoRA adversary runtime.
+- `harmbench_judge_runtime.py`: HarmBench yes/no judge runtime.
+- `openai_reflection_gateway.py`: OpenAI-compatible reflection gateway.
+- `env.py`: `resolve_hf_token()` and `scoped_env(...)`.
+- `evaluation.py`: `EvaluationConfig`, `EvaluationResult`, `EvaluatedSample`, `EvaluationBatchResult`, `evaluate_outputs(...)`, `evaluate_examples(...)`.
+- `gepa_prompt_optimization.py`: GEPA optimization configs and run helpers (single-role and dual-role).
 
 ## End-to-End Dataflow
 
 ### CoEV path (`runs/coev_run.py`)
 1. Parse run config and resolve device.
-2. Build sessions via `RuntimeCatalog`: adversary (Unsloth+LoRA), target (local HF), judge (HarmBench).
-3. Load train/validation prompts via `load_harmbench_subset`.
-4. For each training step: adversary rewrites prompt → target generates defended answer → judge computes reward/ASR → optimizer updates adversary policy.
-5. Persist CSV logs, optional adapters, and `RunManifest`.
+2. Build adversary/target/judge sessions via `RuntimeCatalog`.
+3. Load HarmBench train/val data.
+4. Run REINFORCE updates from judge-backed rewards.
+5. Save logs and `RunManifest`.
 
 ### GEPA path (`runs/gepa_run.py`)
 1. Parse run config and resolve device.
 2. Load HarmBench train/val data.
 3. Build target session, optional judge session, and reflection gateway.
-4. Evaluate baseline system prompt via shared evaluation helpers.
-5. Run `run_gepa_prompt_optimization(...)` to produce candidate prompts.
-6. Evaluate best candidate and save metrics/tables/plots/manifest.
+4. Evaluate baseline prompt using shared evaluators.
+5. Run `run_gepa_prompt_optimization(...)`.
+6. Evaluate optimized prompt and persist artifacts/manifest.
 
 ### CoEV v2 path (`runs/coev_v2_run.py`)
 1. Parse run config and resolve device.
 2. Build adversary/target/judge sessions plus reflection gateway.
-3. Run staged REINFORCE updates (same weight-update semantics as CoEV v1).
-4. At each stage boundary, run GEPA-based optimization for:
-   - attacker instruction (maximize attack success objective),
-   - defense prompt (maximize refusal objective).
-5. Re-evaluate final evolved prompts and persist:
-   - train/stage logs,
-   - optimizer traces,
-   - baseline-vs-optimized metrics,
-   - plots and `RunManifest`.
-
----
+3. Run staged REINFORCE updates.
+4. Run dual-role GEPA optimization at stage boundaries.
+5. Re-evaluate and save full artifacts + `RunManifest`.
 
 ## Implementation Guidance
 
-- Prefer importing from the package root: `from src.runtime import ...`, `from src.data import ...`, `from src.evaluators import ...`
-- Keep runtime objects long-lived — construct once per run.
-- Keep evaluation method selection centralized through `EvaluationConfig`.
-- When adding a backend, implement it in `src/runtime/` and register it in `RuntimeCatalog` rather than branching in run scripts.
-- Preserve backward-compatible CLI flags in `runs/` where practical; map old flags to new implementations internally.
+- Prefer importing from package roots (for example `from src.runtime import ...`).
+- Keep runtime objects long-lived and construct once per run.
+- Keep evaluation mode selection centralized through `EvaluationConfig`.
+- When adding a backend, implement it in `src/runtime/` and register in `RuntimeCatalog`.
+- Preserve CLI compatibility where practical; map legacy flags internally.
 
-### New CoEV v2 usage
+### Example CoEV v2 invocation
 
 ```bash
 uv run runs/coev_v2_run.py \
@@ -169,15 +275,17 @@ uv run runs/coev_v2_run.py \
   --results-dir results/coev_v2
 ```
 
-## Extending the System
-
-1. Create a new script in `runs/` for orchestration only.
-2. Reuse `load_harmbench_subset`, `evaluate_outputs`, and runtime sessions.
-3. Add new shared behavior to `src/` only if at least one existing pipeline can also reuse it.
-4. Emit a `RunManifest` via `write_run_manifest` for consistency across runs.
-
 ## What Belongs Where
 
-**Keep in `src/runtime/`:** model bootstrapping, generation logic, evaluation aggregation, environment/token handling, GEPA/refusal evaluators.
+**Keep in `src/runtime/`**
+- model bootstrapping
+- generation and judging logic
+- evaluation aggregation
+- environment/token handling
+- GEPA/refusal evaluators
 
-**Keep in `runs/` scripts:** CoEV stage scheduling and update strategy, script-specific artifact/report structure, pipeline-specific branching semantics and CLI contracts.
+**Keep in `runs/`**
+- stage scheduling and update strategy
+- pipeline-specific control flow
+- script-specific artifact/report structure
+- CLI contracts

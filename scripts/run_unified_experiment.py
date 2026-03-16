@@ -58,10 +58,14 @@ def parse_args() -> argparse.Namespace:
 
     # CoEV-specific defaults.
     parser.add_argument("--coev-mode", choices=["reinforce", "gepa", "eval"], default="reinforce")
+    parser.add_argument("--coev-v2-mode", choices=["coev", "eval"], default=None)
     parser.add_argument("--device", default=None)
     parser.add_argument("--coev-results-dir", default="results/coev")
     parser.add_argument("--save-dir", default=None)
     parser.add_argument("--eval-instruction", default=None)
+    parser.add_argument("--eval-method", choices=["judge", "heuristic"], default="judge")
+    parser.add_argument("--refusal-threshold", type=float, default=0.7)
+    parser.add_argument("--asr-threshold", type=float, default=0.3)
     parser.add_argument("--coev-extra-args", default="")
     return parser.parse_args()
 
@@ -138,6 +142,12 @@ def build_coev_command(args: argparse.Namespace) -> list[str]:
         args.runtime_profile,
         "--results-dir",
         args.coev_results_dir,
+        "--eval-method",
+        args.eval_method,
+        "--refusal-threshold",
+        str(args.refusal_threshold),
+        "--asr-threshold",
+        str(args.asr_threshold),
     ]
     if args.device:
         cmd.extend(["--device", args.device])
@@ -151,11 +161,16 @@ def build_coev_command(args: argparse.Namespace) -> list[str]:
 
 
 def build_coev_v2_command(args: argparse.Namespace) -> list[str]:
+    coev_v2_mode = args.coev_v2_mode
+    if coev_v2_mode is None:
+        # Backward compatibility: infer coev_v2 mode from legacy coev-mode flag.
+        coev_v2_mode = "coev" if args.coev_mode in {"reinforce", "gepa"} else "eval"
+
     cmd = [
         sys.executable,
         str(COEV_V2_SCRIPT),
         "--mode",
-        "coev" if args.coev_mode in {"reinforce", "gepa"} else "eval",
+        coev_v2_mode,
         "--dataset-name",
         args.dataset_name,
         "--dataset-config",
@@ -186,6 +201,12 @@ def build_coev_v2_command(args: argparse.Namespace) -> list[str]:
         str(args.max_tokens),
         "--gepa-temperature",
         str(args.temperature),
+        "--eval-method",
+        args.eval_method,
+        "--refusal-threshold",
+        str(args.refusal_threshold),
+        "--asr-threshold",
+        str(args.asr_threshold),
     ]
     if args.device:
         cmd.extend(["--device", args.device])

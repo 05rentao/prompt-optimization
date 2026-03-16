@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Callable, Iterable, Literal
 
 from src.evaluators import compute_refusal_score, is_yes_verdict
 
@@ -33,6 +33,27 @@ class EvaluationResult:
     success_count: int | None = None
     refusal_count: int | None = None
     mean_refusal_score: float | None = None
+
+
+@dataclass
+class EvaluatedSample:
+    """Per-example generation payload consumed by evaluation aggregator."""
+
+    id: str
+    behavior: str
+    generation: str
+    latency_ms: float | None = None
+    row: dict[str, Any] | None = None
+
+
+@dataclass
+class EvaluationBatchResult:
+    """High-level evaluation output with rows + aggregate metrics."""
+
+    eval_result: EvaluationResult
+    aggregate_score: float
+    metrics: dict[str, float]
+    rows: list[dict[str, Any]]
 
 
 def _normalize_behaviors(behaviors: str | list[str], n_generations: int) -> str | list[str]:
@@ -86,3 +107,57 @@ def evaluate_outputs(
         )
 
     raise ValueError(f"Unsupported evaluation method: {cfg.method}")
+
+
+def evaluate_examples(
+    examples: Iterable[Any],
+    run_example: Callable[[Any], EvaluatedSample],
+    cfg: EvaluationConfig,
+    judge_session: GenerationSession | None = None,
+) -> EvaluationBatchResult:
+    """Run per-example generation callback and aggregate evaluation metrics."""
+    rows: list[dict[str, Any]] = []
+    behaviors: list[str] = []
+    generations: list[str] = []
+    latencies_ms: list[float] = []
+
+    for example in examples:
+        sample = run_example(example)
+        behaviors.append(sample.behavior)
+        generations.append(sample.generation)
+        if sample.latency_ms is not None:
+            latencies_ms.append(float(sample.latency_ms))
+
+        row_payload: dict[str, Any] = {
+            "id": sample.id,
+            "behavior": sample.behavior,
+            "generation": sample.generation,
+        }
+        if sample.row:
+            row_payload.update(sample.row)
+        if sample.latency_ms is not None and "latency_ms" not in row_payload:
+            row_payload["latency_ms"] = float(sample.latency_ms)
+        rows.append(row_payload)
+
+    eval_result = evaluate_outputs(
+        behaviors=behaviors,
+        generations=generations,
+        cfg=cfg,
+        judge_session=judge_session,
+    )
+    aggregate_score = eval_result.mean_refusal_score
+    if aggregate_score is None:
+        aggregate_score = eval_result.refusal_rate
+    metrics = {
+        "refusal_rate": float(eval_result.refusal_rate),
+        "asr": float(eval_result.asr),
+        "mean_refusal_score": float(eval_result.mean_refusal_score or 0.0),
+        "aggregate_score": float(aggregate_score),
+        "latency_ms_mean": float(sum(latencies_ms) / len(latencies_ms)) if latencies_ms else 0.0,
+    }
+    return EvaluationBatchResult(
+        eval_result=eval_result,
+        aggregate_score=float(aggregate_score),
+        metrics=metrics,
+        rows=rows,
+    )

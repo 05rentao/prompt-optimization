@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import Any, TypedDict
 
 
 @dataclass(frozen=True)
@@ -28,3 +28,72 @@ class RunManifest:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+class HarmBenchExampleRow(TypedDict):
+    """Normalized HarmBench example schema shared across runs."""
+
+    id: str
+    prompt: str
+    is_harmful_request: bool
+
+
+class GepaExampleRow(TypedDict):
+    """GEPA example schema expected by optimize_anything evaluators."""
+
+    id: str
+    input: str
+
+
+class CoevEvalOutputRow(TypedDict):
+    """Row-level evaluation output schema for CoEV-style pipelines."""
+
+    id: str
+    prompt: str
+    adversary_prompt: str
+    target_response: str
+    refusal_score: float
+    asr_score: float
+    adversary_latency_ms: float
+    target_latency_ms: float
+    latency_ms_total: float
+
+
+class CoevTrainingLogRow(TypedDict):
+    """Per-iteration training log row schema for CoEV pipelines."""
+
+    stage: int
+    iter: int
+    dataset_index: int
+    attacker_instruction: str
+    defense_prompt: str
+    orig_prompt: str
+    adv_prompt: str
+    target_resp: str
+    reward: float
+    loss: float
+    verdict: str
+
+
+class CoevStageMetricRow(TypedDict, total=False):
+    """Per-stage metrics row schema for staged CoEV training."""
+
+    stage: int
+    phase: str
+    score: float
+    refusal_rate: float
+    asr: float
+    mean_refusal_score: float
+    aggregate_score: float
+    latency_ms_mean: float
+
+
+class OptimizerTraceRow(TypedDict, total=False):
+    """Optimizer trace row schema for GEPA optimization trajectories."""
+
+    timestamp: float
+    stage: int
+    role: str
+    score: float
+    input_preview: str
+    latency_ms: float

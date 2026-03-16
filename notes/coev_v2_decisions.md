@@ -119,3 +119,26 @@ Why:
 - HarmBench data loading and judge integration.
 
 This keeps CoEV v2 comparable to original CoEV while changing only the prompt evolution mechanism and artifact richness.
+
+## Follow-up modularization migration
+
+After the initial CoEV v2 implementation, key reusable pieces were moved into `src/`:
+
+- GEPA dual-role optimization moved to `src/runtime/gepa_prompt_optimization.py`:
+  - `DualRoleGepaPromptOptimizationConfig`
+  - `DualRoleGepaContext`
+  - `DualRoleGepaOptimizationResult`
+  - `run_dual_role_gepa_prompt_optimization(...)`
+- Shared evaluation orchestration moved to `src/runtime/evaluation.py`:
+  - `EvaluatedSample`
+  - `EvaluationBatchResult`
+  - `evaluate_examples(...)`
+- Shared artifact helpers moved to `src/artifacts.py`:
+  - json/text/csv writers
+  - baseline-vs-optimized and trajectory plot helpers
+- Shared data/config/type contracts expanded:
+  - GEPA dataset adapters in `src/data.py`
+  - shared target config in `src/runtime/config.py`
+  - row schema typing in `src/types.py`
+
+This reduced duplicated logic in `runs/coev_v2_run.py` and `runs/gepa_run.py` while preserving run-script orchestration semantics.
