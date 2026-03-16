@@ -70,7 +70,7 @@ uv run runs/coev_v2_run.py --mode eval
 ### Unified wrapper (recommended for team usage)
 
 ```bash
-uv run scripts/run_unified_experiment.py --mode mark
+uv run scripts/run_unified_experiment.py --mode gepa
 uv run scripts/run_unified_experiment.py --mode coev --coev-mode reinforce
 uv run scripts/run_unified_experiment.py --mode coev_v2 --coev-v2-mode coev
 ```

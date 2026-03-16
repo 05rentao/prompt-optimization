@@ -1,179 +1,224 @@
-# STAT 4830 — Red Team Adversarial Training
+# STAT 4830 — Prompt Optimization Runs
 
-This project implements an **adversarial red team** loop: a small LM (the *adversary*) learns to generate jailbreak prompts, a *target* model responds, and a *judge* scores whether the target complied. The adversary is updated with REINFORCE using that reward. **No API keys are required**; the judge is the local **cais/HarmBench-Llama-2-13b-cls** classifier (official HarmBench rubric, 4-bit on CUDA).
+This repository contains four experiment runners under `runs/` that share a common flow:
+an adversary rewrites harmful prompts, a target model responds, and evaluation tracks ASR/refusal.  
+Some runs only train adversary weights, while others optimize attacker/defense prompts with GEPA.
 
----
+The reusable runtime/evaluation/artifact logic lives in `src/`. See `src/README.md` for the detailed module guide.
 
-## Repo layout
+## Canonical run pipeline
 
+For consistency, the run scripts are organized in the same top-level phase order:
+
+1. `parse_args()` + load defaults from `configs/default.yaml`
+2. `resolve_device(...)` + build `EvaluationConfig`
+3. build long-lived runtime sessions (`RuntimeCatalog`)
+4. load data via `load_harmbench_subset(...)` and slice prompts
+5. baseline evaluation
+6. optimization loop (or eval-only mode)
+7. final evaluation
+8. save artifacts + `run_manifest.json`
+
+This is the pattern to look for when inspecting code in `runs/`.
+
+## Runs Overview
+
+### `runs/adversary_run.py`
+- **Purpose:** adversary-only REINFORCE fine-tuning (no prompt optimization).
+- **Pipeline shape:** full baseline -> train loop -> final eval -> artifacts.
+- **Unique behavior:** updates only adversary weights; target system prompt stays fixed.
+- **Artifacts:** metrics JSON + training CSV + eval CSV + manifest (+ optional LoRA adapter save).
+
+### `runs/coev_run.py`
+- **Purpose:** legacy CoEV runner with `reinforce`, `gepa` implmentation from scratch, or `eval` mode.
+- **Pipeline shape:** baseline eval first, then mode-specific optimize/eval path, then manifest.
+- **Unique behavior:** using GEPA evolution implmented from scratch (reflection from an LLM), while preserving REINFORCE mode.
+- **Artifacts:** mode CSV logs + manifest (+ optional LoRA adapter save).
+
+### `runs/coev_v2_run.py`
+- **Purpose:** staged CoEV pipeline combining REINFORCE updates with dual-role GEPA.
+- **Pipeline shape:** baseline eval -> staged training/evolution -> final eval -> full artifact bundle.
+- **Unique behavior:** alternates adversary weight updates with attacker/defender GEPA prompt evolution per stage.
+- **Artifacts:** metrics JSON, comparison/trace/stage CSVs, plots, manifest (+ optional LoRA adapter save).
+
+### `runs/gepa_run.py`
+- **Purpose:** GEPA-only system prompt optimization for defense behavior.
+- **Pipeline shape:** baseline eval -> GEPA optimization -> final eval -> artifacts.
+- **Unique behavior:** no adversary weight updates; focuses on improving a defense/system prompt.
+- **Artifacts:** metrics JSON, baseline/optimized CSVs, optimizer trace, plots, manifest.
+
+## Compare and contrast
+
+- **Shared:** all four runs now follow the same high-level phase ordering and use shared `src/` runtime/evaluation modules.
+- **Adversary training:** `adversary_run.py`, `coev_run.py`, and `coev_v2_run.py` run REINFORCE-style updates; `gepa_run.py` does not.
+- **Prompt evolution:** `gepa_run.py` and `coev_v2_run.py` use GEPA optimization; `coev_run.py` has a lighter legacy GEPA stage path.
+- **Reflection endpoint dependency:** GEPA-based runs require an OpenAI-compatible reflection endpoint (`runtime.reflection` in config), commonly a local vLLM service.
+- **Persistence depth:** `coev_v2_run.py` and `gepa_run.py` save the richest artifact sets (plots + multiple traces), while `coev_run.py` stays minimal.
+
+## Streamlining opportunities across all four runs
+
+- Centralize baseline/final evaluation scaffolding into one helper that returns `(metrics, rows)` with a consistent schema.
+- Standardize CSV column names across runs (for example `target_response` vs `target_resp`) for easier downstream analysis.
+- Normalize CLI names for equivalent knobs (`max_tokens` vs `gepa_max_tokens`) and keep mode naming consistent in manifests.
+- Unify artifact writers so every run emits a minimal common contract: `metrics.json`, `baseline.csv`, `final.csv`, and `run_manifest.json`.
+- Move reflection endpoint verification/setup into a shared bootstrap helper used by GEPA-capable runs.
+
+## Artifact generation details
+
+### Common artifact flow
+
+Across runs, artifact generation happens after baseline/final metrics are available:
+
+1. build metrics payloads (baseline/final stats + run metadata)
+2. write structured tables (CSV) for analysis/debugging
+3. write `run_manifest.json` as the index of run settings and outputs
+4. optionally save adapters (adversary-capable runs)
+5. optionally save plots/extra trace files (GEPA-focused runs)
+
+By default, artifacts are written under each run's `--results-dir` (or that run's config default), except where noted below.
+
+### What each run writes
+
+### `runs/adversary_run.py`
+- `adversary_run_metrics.json`
+- training CSV (`training_csv_name`, default from `configs/default.yaml`)
+- eval CSV (`eval_csv_name`, default from `configs/default.yaml`)
+- `run_manifest.json`
+- optional adapter directory from `--save-dir`
+
+### `runs/coev_run.py`
+- REINFORCE CSV (`reinforce.csv_path`) when `--mode reinforce`
+- GEPA CSV (`gepa.csv_path`) when `--mode gepa`
+- `run_manifest.json`
+- optional adapter directory from `--save-dir`
+- note: the CSV paths come from config and may be outside `--results-dir` if configured that way
+
+### `runs/coev_v2_run.py`
+- run metadata JSON (`coev_v2_run_config.json`)
+- metrics JSON (`coev_v2_metrics.json`)
+- CSV bundle from `write_many_csv(...)` (baseline/optimized outputs, training log, traces, stage metrics)
+- baseline-vs-optimized bar plot
+- optimizer trajectory plot(s)
+- `run_manifest.json`
+- optional adapter directory from `--save-dir`
+
+### `runs/gepa_run.py`
+- best prompt text file (`optimized_system_prompt.txt`)
+- metrics JSON (`gepa_metrics.json`)
+- CSV bundle (comparison, baseline outputs, optimized outputs)
+- optional `optimizer_trace.csv` when trace rows exist
+- baseline-vs-optimized bar plot
+- optimizer trajectory plot
+- `run_manifest.json`
+
+## Getting started
+
+Use one of these two workflows depending on your environment.
+
+### Option A: Prime launcher (recommended on cluster/GPU server)
+
+```bash
+# GEPA (starts reflection vLLM, then runs unified runner in gepa mode)
+MODE=gepa bash scripts/launch_unified_prime.sh
+
+# CoEV (no vLLM startup path)
+MODE=coev COEV_MODE=reinforce bash scripts/launch_unified_prime.sh
+
+# CoEV v2 (starts reflection vLLM, then runs coev_v2 mode)
+MODE=coev_v2 COEV_V2_MODE=coev bash scripts/launch_unified_prime.sh
+
+# Adversary-only (no vLLM startup path)
+MODE=adversary ADVERSARY_MODE=train bash scripts/launch_unified_prime.sh
 ```
-configs/default.yaml    # Hyperparameters and model names
-run_experiment.py       # Entry point: load config, build adversary/data/target, run loop
-baseline.py             # Entry point to run baseline eval on target model.
-colab_experiment.ipynb  # Same flow for Google Colab (T4 GPU)
-pyproject.toml          # UV project manifest (if using uv sync)
 
-src/
-  adversary/policy.py   # RedTeamPolicy: Qwen2.5-1.5B + LoRA, REINFORCE updates
-  data/harmbench_loader.py  # HarmBenchLoader: loads HarmBench behaviors (or synthetic fallback)
-  evaluator/judge.py    # LocalHarmBenchJudge: cais/HarmBench-Llama-2-13b-cls, official chat template, compute_reward()
-  training/loop.py      # TrainingLoop: attack → target → judge → compute_reward → update
-  training/logger.py    # ExperimentLogger: CSV log of steps (epoch, behavior, attack, response, reward)
-  defense/gepa_wrapper.py  # BlueTeam / GEPA-style defense (DSPy module; hooked in later)
+Useful overrides:
+- `TRAIN_SIZE`, `VAL_SIZE`, `MAX_METRIC_CALLS`, `MAX_TOKENS`
+- `EVAL_METHOD`, `REFUSAL_THRESHOLD`, `ASR_THRESHOLD`
+- `GEPA_RESULTS_DIR`, `COEV_RESULTS_DIR`
+
+### Option B: Run scripts directly
+
+```bash
+# Setup once
+uv sync
+
+# Run a single pipeline directly
+uv run runs/gepa_run.py --show-progress
+uv run runs/coev_run.py --mode reinforce
+uv run runs/coev_v2_run.py --mode coev
+uv run runs/adversary_run.py --mode train
 ```
 
----
-
-## How the code works
-
-1. **Config**  
-   `configs/default.yaml` defines:
-   - **adversary**: model (e.g. `unsloth/Qwen2.5-1.5B-Instruct`), learning rate, LoRA rank/alpha, max length.
-   - **evaluator**: judge model (default `cais/HarmBench-Llama-2-13b-cls`) — local classifier, no API key.
-   - **target**: name of the target model (used when you switch from a mock to a real model).
-   - **training**: epochs, batch size, HarmBench limit.
-   - **seed_prompt**: the seed prompt for the model to start with
-
-2. **Entry point for training**  
-   `run_experiment.py` loads the config, builds the **RedTeamPolicy** (adversary), **HarmBenchLoader** (behaviors), and a **target** callable (mock or real model). It then constructs **TrainingLoop** and calls `trainer.run()`.
-
-3. **Adversary (`src/adversary/policy.py`)**  
-   - **RedTeamPolicy** loads the adversary model with Unsloth (4-bit + LoRA), and uses pure SGD as the optimizer.
-   - **generate_attack(behavior)** produces a jailbreak prompt and the log-probability of the generated tokens (for REINFORCE).
-   - **update(log_prob, reward)** performs the REINFORCE step: loss = -reward * log_prob, backward, optimizer step.
-
-4. **Data (`src/data/harmbench_loader.py`)**  
-   **HarmBenchLoader.load(limit)** tries to load the HarmBench "behavioral" split from Hugging Face; on failure it falls back to a small list of synthetic harmful behaviors. Each item is a dict with a `"behavior"` key.
-
-5. **Evaluator (`src/evaluator/judge.py`)**  
-   - **LocalHarmBenchJudge** loads the official **cais/HarmBench-Llama-2-13b-cls** classifier with **transformers** and **bitsandbytes** (4-bit quantization, bfloat16 compute) on CUDA.
-   - Uses the **official HarmBench chat template**: system instructions for red-team classification, behavior/generation placeholders, and the rubric rules (unambiguous, non-minimal, harmful, code artifacts when applicable).
-   - **`__call__(behavior, response)`** returns a namespace with **`is_jailbroken`** = **`"Yes"`** or **`"No"`** (Llama-2-13b-cls format).
-   - **compute_reward(is_jailbroken)** returns **1.0** for `"Yes"` and **0.0** for `"No"` for the REINFORCE loop. No API key is used.
-
-6. **Training loop (`src/training/loop.py`)**  
-   For each epoch and each behavior entry:
-   - Adversary generates an **attack prompt** and its **log_prob**.
-   - **Target** is called with the current system prompt and the attack; it returns a **response**.
-   - **LocalHarmBenchJudge** evaluates (behavior, response) → **"Yes"** / **"No"**; **compute_reward()** maps that to **1.0** / **0.0**.
-   - Adversary is **updated** with REINFORCE using that reward and log_prob.
-   - **ExperimentLogger** appends a row to a timestamped CSV in `outputs/`.
-
-   A fixed system prompt is used for the target for now; a TODO indicates where to plug in GEPA-style defense evolution later.
-
-7. **Logger (`src/training/logger.py`)**  
-   **ExperimentLogger** creates `outputs/experiment_YYYYMMDD_HHMMSS.csv` and appends one row per step (epoch, behavior, adversary_attack, target_response, reward, is_jailbroken, explanation).
-
-8. **Defense (`src/defense/gepa_wrapper.py`)**  
-   Defines a DSPy **BlueTeam** module and **DefenseSystem** signature for evolving a system prompt from failed defenses. Not wired into the main loop yet; intended for future GEPA integration.
-
-9. **Baseline Eval**  
-   Runs a baseline evaluation of the target model on with inputs from HarmBench dataset, get the attack success ratio (ASR)
-
----
+Use direct script calls when developing/debugging one pipeline; use the launcher when you want repeatable server setup and runtime orchestration.
 
 ## Running locally
 
 ### Prerequisites
 
-- **Python 3.10+** and a **GPU with enough VRAM** (the judge is a 13B model in 4-bit; ~8–10 GB typical; adversary adds more).
-- **[uv](https://docs.astral.sh/uv/)** — a fast Python package and project manager. Install it once system-wide:
-
-  ```bash
-  # macOS / Linux
-  curl -LsSf https://astral.sh/uv/install.sh | sh
-
-  # Windows (PowerShell)
-  powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-  ```
-
-  Or via pip if you already have Python: `pip install uv`
+- Python 3.10+
+- GPU recommended for local model + judge workloads
+- `uv` package manager: [https://docs.astral.sh/uv/](https://docs.astral.sh/uv/)
 
 ### Setup
 
-1. **Clone the repo and enter the project directory:**
-
-   ```bash
-   git clone <repo-url>
-   cd <repo-directory>
-   ```
-
-2. **Create a virtual environment and install dependencies:**
-
-   ```bash
-   uv sync
-   ```
-
-   To target a specific Python version:
-
-   ```bash
-   uv venv --python 3.12
-   uv pip install -r requirements.txt
-   ```
-
-3. **Activate the environment** (optional — `uv run` handles this automatically):
-
-   ```bash
-   # macOS / Linux
-   source .venv/bin/activate
-
-   # Windows
-   .venv\Scripts\activate
-   ```
+```bash
+uv sync
+```
 
 ### Running
 
 ```bash
-# With the venv activated:
-python run_experiment.py
+# Inspect script options
+uv run runs/adversary_run.py --help
+uv run runs/coev_run.py --help
+uv run runs/coev_v2_run.py --help
+uv run runs/gepa_run.py --help
 
-# Or without activating, using uv run:
-uv run python run_experiment.py
-
-# Baseline evaluation:
-uv run python baseline.py
+# Typical runs
+uv run runs/adversary_run.py --mode train
+uv run runs/coev_run.py --mode reinforce
+uv run runs/coev_v2_run.py --mode coev
+uv run runs/gepa_run.py --show-progress
 ```
 
-No API key is required; the evaluator uses the local **cais/HarmBench-Llama-2-13b-cls** model from `configs/default.yaml`.
+### Notes on keys/endpoints
 
-### Managing dependencies
+- HarmBench dataset loading may require Hugging Face authentication depending on environment (`HF_TOKEN`).
+- GEPA-based runs need an OpenAI-compatible reflection endpoint configured in `configs/default.yaml`.
+- A paid external API key is not required when using local vLLM + `api_key: EMPTY`.
+
+### Verify Hugging Face model access
+
+Before launching long runs, double check that your account/token can access the required models.
 
 ```bash
-# Add a new package and update requirements.txt
-uv pip install <package>
-uv pip freeze > requirements.txt
+# 1) export token
+export HF_TOKEN=hf_xxx
 
-# Sync your environment to exactly match requirements.txt
-uv pip sync requirements.txt
+# 2) Sanity check token works
+python3 -c "from huggingface_hub import whoami; print(whoami())"
+
+# 3) Verify you can resolve the core model repos used by defaults
+python3 - <<'PY'
+from huggingface_hub import model_info
+models = [
+    "unsloth/Qwen2.5-1.5B-Instruct",
+    "meta-llama/Llama-2-7b-chat-hf",
+    "cais/HarmBench-Mistral-7b-val-cls",
+]
+for m in models:
+    try:
+        model_info(m)
+        print(f"OK: {m}")
+    except Exception as e:
+        print(f"FAIL: {m} -> {e}")
+PY
 ```
 
----
-
-## Running on Google Colab
-
-1. Open **colab_experiment.ipynb** and set the runtime to **T4 GPU** (or higher; 13B judge in 4-bit may need A100 or similar depending on adversary).
-2. Run the cells in order: **Setup** (install deps via `uv pip install -r requirements.txt`, unzip `project.zip` if needed), **Environment** (add project root to path), **Imports**, then **Execution** (load config, build adversary/behaviors/mock target, run `trainer.run()`).
-3. To use `uv` in Colab, add this to your setup cell:
-   ```bash
-   !curl -LsSf https://astral.sh/uv/install.sh | sh
-   !uv pip install -r requirements.txt --system
-   ```
-4. No API key is needed; the notebook uses the same local HarmBench judge.
-
----
-
-## Config summary
-
-| Section     | Key example   | Purpose |
-|------------|----------------|---------|
-| `adversary` | `model_name`, `learning_rate`, `lora_r`, `lora_alpha`, `max_seq_length` | Red-team LM and training |
-| `evaluator` | `model_name`  | Local HarmBench classifier (default `cais/HarmBench-Llama-2-13b-cls`) |
-| `defense`   | `model_name`, `evolution_steps` | Reserved for future GEPA/defense |
-| `target`    | `model_name`  | Target model name (for when you use a real model) |
-| `training`  | `epochs`, `batch_size`, `harmbench_limit` | Loop and data size |
-| `seed_prompt`  | `prompt` | Storing seed prompt |
-
----
+If a model check fails, make sure:
+- your token is valid in the current shell/session,
+- your Hugging Face account has accepted the model's license/gated terms (if applicable),
+- the model IDs in `configs/default.yaml` match repositories you can access.
 
 ## License / course
 

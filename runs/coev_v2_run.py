@@ -29,7 +29,13 @@ from src.artifacts import (
     write_run_manifest,
 )
 from src.data import load_harmbench_subset
-from src.evaluators import compute_refusal_score, is_yes_verdict
+from src.evaluators import compute_refusal_score
+from src.run_pipeline import (
+    build_prompt_pool,
+    compute_reward_and_verdict,
+    maybe_save_adapters as maybe_save_adapters_common,
+    split_prompt_pool,
+)
 from src.runtime import (
     CoevConfig,
     EvaluationConfig,
@@ -263,17 +269,12 @@ def evaluate_prompts(
     return metrics, df
 
 
-def maybe_save_adapters(ctx: RunContext, save_dir: str | None) -> None:
+def maybe_save_adapters(ctx: RunContext, save_dir: str | None) -> str | None:
     """Optionally persist adversary adapters/tokenizer artifacts."""
-
-    if not save_dir:
-        return
-    output_dir = Path(save_dir)
-    runtime = ctx.adversary_session.runtime
-    if not hasattr(runtime, "save_adapters"):
-        raise RuntimeError("Adversary runtime must expose save_adapters().")
-    runtime.save_adapters(output_dir)
-    print(f"Saved model/tokenizer to: {output_dir}")
+    saved_path = maybe_save_adapters_common(ctx.adversary_session, save_dir)
+    if saved_path:
+        print(f"Saved model/tokenizer to: {saved_path}")
+    return saved_path
 
 
 def save_artifacts(
@@ -440,7 +441,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     """Run full CoEV v2 pipeline: train/evolve/evaluate and persist artifacts."""
-
+    # Phase 1: parse args + defaults.
     args = parse_args()
     defaults = load_default_config()
     global_defaults = defaults["global"]
@@ -456,6 +457,7 @@ def main() -> None:
     args.reflection_vllm_base_url = reflection_defaults["base_url"]
     args.reflection_vllm_api_key = reflection_defaults["api_key"]
 
+    # Phase 2: resolve device + evaluation config.
     run_start = time.time()
     sns.set_theme(style="whitegrid")
 
@@ -466,6 +468,7 @@ def main() -> None:
         asr_threshold=args.asr_threshold,
     )
 
+    # Phase 3: build long-lived runtime sessions.
     model_cfg = ModelConfig(model_id=args.adversary_model_id)
     adversary_cfg = UnslothAdversaryConfig(
         model_id=model_cfg.model_id,
@@ -522,6 +525,7 @@ def main() -> None:
         device=device,
     )
 
+    # Phase 4: load dataset + derive prompt slices.
     hf_token = resolve_hf_token()
     train_data, val_data, _ = load_harmbench_subset(
         dataset_name=args.dataset_name,
@@ -532,12 +536,18 @@ def main() -> None:
         seed=args.seed,
         hf_token=hf_token,
     )
-    prompts = [sample["prompt"] for sample in train_data] + [sample["prompt"] for sample in val_data]
-
-    train_prompts = prompts[: coev_cfg.train_slice_end]
-    eval_prompts = prompts[coev_cfg.eval_slice_start : coev_cfg.eval_slice_end]
+    prompts = build_prompt_pool(train_data, val_data)
+    train_prompts, eval_prompts = split_prompt_pool(
+        prompts=prompts,
+        train_slice_end=coev_cfg.train_slice_end,
+        eval_slice_start=coev_cfg.eval_slice_start,
+        eval_slice_end=coev_cfg.eval_slice_end,
+        require_train=args.mode != "eval",
+        script_name="coev_v2_run",
+    )
     eval_examples = [{"id": f"eval_{i}", "prompt": p} for i, p in enumerate(eval_prompts)]
 
+    # Phase 5: baseline evaluation.
     attacker_instruction = coev_cfg.initial_attacker_instruction
     defense_prompt = coev_cfg.initial_defense_prompt
     baseline_metrics, baseline_df = evaluate_prompts(
@@ -550,6 +560,7 @@ def main() -> None:
     )
     print("Baseline metrics:", baseline_metrics)
 
+    # Phase 6: optimization loop (or eval-only path).
     if args.mode == "eval":
         maybe_save_adapters(ctx, args.save_dir)
         run_seconds = time.time() - run_start
@@ -601,8 +612,12 @@ def main() -> None:
                 defense_prompt=defense_prompt,
                 max_new_tokens=args.max_new_tokens,
             )
-            verdict = ctx.judge_session.judge(behaviors=original_prompt, generations=[target_resp])[0]
-            reward = 1.0 if is_yes_verdict(verdict) else 0.0
+            reward, verdict = compute_reward_and_verdict(
+                behavior=original_prompt,
+                generation=target_resp,
+                eval_cfg=eval_cfg,
+                judge_session=ctx.judge_session if eval_cfg.method == "judge" else None,
+            )
             loss_val, _ = reinforce_update_batch_sgd(
                 model,
                 optimizer,
@@ -682,6 +697,7 @@ def main() -> None:
     )
     print("Optimized metrics:", optimized_metrics)
 
+    # Phase 7/8: final evaluation complete; persist artifacts + manifest.
     maybe_save_adapters(ctx, args.save_dir)
     run_seconds = time.time() - run_start
 

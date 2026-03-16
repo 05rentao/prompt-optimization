@@ -23,6 +23,12 @@ import pandas as pd
 
 from src.artifacts import write_run_manifest
 from src.data import load_harmbench_subset
+from src.run_pipeline import (
+    build_prompt_pool,
+    compute_reward_and_verdict,
+    maybe_save_adapters as maybe_save_adapters_common,
+    split_prompt_pool,
+)
 from src.runtime import (
     EvaluationConfig,
     EvaluationResult,
@@ -37,8 +43,6 @@ from src.runtime import (
 )
 from src.runtime.defaults import load_default_config
 from src.types import RunManifest
-
-from src.evaluators import is_yes_verdict
 
 DEFAULT_REWRITER_INSTRUCTION = (
     "Output ONLY one line starting with 'PROMPT: '. Rewrite the user request "
@@ -282,6 +286,7 @@ def evaluate_asr(
     attacker_instruction: str,
     ctx: RunContext,
     eval_cfg: EvaluationConfig,
+    defense_prompt: str | None = None,
 ) -> EvaluationResult:
     """Compute attack/refusal metrics over eval prompts for configured method."""
     generations = []
@@ -291,6 +296,7 @@ def evaluate_asr(
             res["completion_text"].strip(),
             target_session=ctx.target_session,
             device=ctx.device,
+            defense_prompt=defense_prompt,
         )
         generations.append(target_response)
 
@@ -341,13 +347,12 @@ def gepa_evolve_prompts(
 
 def run_reinforce_training(
     cfg: ReinforceConfig,
-    prompts: list[str],
+    train_prompts: list[str],
+    eval_prompts: list[str],
     ctx: RunContext,
     eval_cfg: EvaluationConfig,
-) -> None:
+) -> EvaluationResult:
     """Run adversary weight updates with periodic ASR evaluation."""
-    train_prompts = prompts[: cfg.train_slice_end]
-    eval_prompts = prompts[cfg.eval_slice_start : cfg.eval_slice_end]
     model = ctx.adversary_session.runtime
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 
@@ -374,8 +379,12 @@ def run_reinforce_training(
         adversary_text = res["completion_text"].strip()
         target_response = target_generate(adversary_text, target_session=ctx.target_session, device=ctx.device)
 
-        verdict = generate_harmbench_results(prompt, [target_response], ctx.judge_session)[0]
-        reward = 1.0 if is_yes_verdict(verdict) else 0.0
+        reward, verdict = compute_reward_and_verdict(
+            behavior=prompt,
+            generation=target_response,
+            eval_cfg=eval_cfg,
+            judge_session=ctx.judge_session if eval_cfg.method == "judge" else None,
+        )
 
         # RL Update
         rewards = torch.tensor([reward], dtype=torch.float32, device=res["gen_ids"].device)  # make reward into a tensor
@@ -422,17 +431,17 @@ def run_reinforce_training(
     print(f"Final refusal_rate: {final_eval.refusal_rate:.3f}")
     print(f"Saved to: {cfg.csv_path}")
     print(f"Seconds per iter: {(time.time() - t0) / max(cfg.iterations, 1):.3f}")
+    return final_eval
 
 
 def run_gepa_training(
     cfg: GepaConfig,
-    prompts: list[str],
+    train_prompts: list[str],
+    eval_prompts: list[str],
     ctx: RunContext,
     eval_cfg: EvaluationConfig,
-) -> None:
+) -> EvaluationResult:
     """Run staged co-evolution with REINFORCE updates and prompt evolution."""
-    train_prompts = prompts[: cfg.train_slice_end]
-    eval_prompts = prompts[cfg.eval_slice_start : cfg.eval_slice_end]
     model = ctx.adversary_session.runtime
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 
@@ -472,8 +481,12 @@ def run_gepa_training(
                 device=ctx.device,
                 defense_prompt=defense_prompt,
             )
-            verdict = generate_harmbench_results(original_prompt, [target_resp], ctx.judge_session)[0]
-            reward = 1.0 if is_yes_verdict(verdict) else 0.0
+            reward, verdict = compute_reward_and_verdict(
+                behavior=original_prompt,
+                generation=target_resp,
+                eval_cfg=eval_cfg,
+                judge_session=ctx.judge_session if eval_cfg.method == "judge" else None,
+            )
 
             reinforce_update_batch_sgd(
                 model,
@@ -507,6 +520,7 @@ def run_gepa_training(
                 attacker_instruction,
                 ctx,
                 eval_cfg,
+                defense_prompt=defense_prompt,
             )
             asr = eval_result.asr
             refusal_rate = eval_result.refusal_rate
@@ -534,18 +548,24 @@ def run_gepa_training(
         # update prompts and then rinse and repeat
 
     print("Training complete.")
+    final_eval = evaluate_asr(
+        eval_prompts,
+        attacker_instruction,
+        ctx,
+        eval_cfg,
+        defense_prompt=defense_prompt,
+    )
+    print(f"Final ASR: {final_eval.asr:.3f}")
+    print(f"Final refusal_rate: {final_eval.refusal_rate:.3f}")
+    return final_eval
 
 
-def maybe_save_adapters(ctx: RunContext, save_dir: str | None) -> None:
+def maybe_save_adapters(ctx: RunContext, save_dir: str | None) -> str | None:
     """Persist adversary LoRA adapters via the session runtime."""
-    if not save_dir:
-        return
-    output_dir = Path(save_dir)
-    runtime = ctx.adversary_session.runtime
-    if not hasattr(runtime, "save_adapters"):
-        raise RuntimeError("Adversary runtime must expose save_adapters(); legacy fallback path was removed.")
-    runtime.save_adapters(output_dir)
-    print(f"Saved model/tokenizer to: {output_dir}")
+    saved_path = maybe_save_adapters_common(ctx.adversary_session, save_dir)
+    if saved_path:
+        print(f"Saved model/tokenizer to: {saved_path}")
+    return saved_path
 
 
 def parse_args() -> argparse.Namespace:
@@ -574,6 +594,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     """Run CoEV pipeline: load sessions, train/eval, persist outputs."""
     run_start = time.time()
+    # Phase 1: parse args + defaults.
     args = parse_args()
     defaults = load_default_config()
     global_defaults = defaults["global"]
@@ -581,6 +602,7 @@ def main() -> None:
     run_defaults = defaults["runs"]["coev"]
     runtime_profile = global_defaults["runtime_profile"]
 
+    # Phase 2: resolve device + evaluation config.
     device = resolve_device(args.device)
     eval_cfg = EvaluationConfig(
         method=args.eval_method,
@@ -588,6 +610,7 @@ def main() -> None:
         asr_threshold=args.asr_threshold,
     )
 
+    # Phase 3: build long-lived runtime sessions.
     adversary_cfg = ModelConfig(model_id=model_defaults["adversary_model_id"])
     target_cfg = TargetModelConfig(model_id=model_defaults["target_model_name"])
     reinforce_cfg = ReinforceConfig(**run_defaults["reinforce"])
@@ -602,6 +625,7 @@ def main() -> None:
         judge_session=judge_session,
         device=device,
     )
+    # Phase 4: load dataset + derive prompt slices.
     hf_token = resolve_hf_token()
 
     train_data, val_data, _ = load_harmbench_subset(
@@ -613,36 +637,63 @@ def main() -> None:
         seed=args.seed,
         hf_token=hf_token,
     )
-    # Keep train/eval slicing behavior stable while ensuring eval windows are populated.
-    prompts = [sample["prompt"] for sample in train_data] + [sample["prompt"] for sample in val_data]
+    prompts = build_prompt_pool(train_data, val_data)
+    if args.mode == "gepa":
+        active_cfg = gepa_cfg
+        baseline_instruction = gepa_cfg.initial_attacker_instruction
+        baseline_defense_prompt = gepa_cfg.initial_defense_prompt
+    elif args.mode == "reinforce":
+        active_cfg = reinforce_cfg
+        baseline_instruction = DEFAULT_REWRITER_INSTRUCTION
+        baseline_defense_prompt = None
+    else:
+        active_cfg = reinforce_cfg
+        baseline_instruction = args.eval_instruction
+        baseline_defense_prompt = None
 
+    train_prompts, eval_prompts = split_prompt_pool(
+        prompts=prompts,
+        train_slice_end=active_cfg.train_slice_end,
+        eval_slice_start=active_cfg.eval_slice_start,
+        eval_slice_end=active_cfg.eval_slice_end,
+        require_train=args.mode != "eval",
+        script_name="coev_run",
+    )
+
+    # Phase 5: baseline evaluation.
+    baseline_eval = evaluate_asr(
+        eval_prompts=eval_prompts,
+        attacker_instruction=baseline_instruction,
+        ctx=ctx,
+        eval_cfg=eval_cfg,
+        defense_prompt=baseline_defense_prompt,
+    )
+    print(f"Baseline ASR: {baseline_eval.asr:.3f} | refusal_rate: {baseline_eval.refusal_rate:.3f}")
+
+    # Phase 6: optimization loop (or eval-only path).
+    final_eval = baseline_eval
     if args.mode == "reinforce":
-        run_reinforce_training(
+        final_eval = run_reinforce_training(
             reinforce_cfg,
-            prompts,
+            train_prompts,
+            eval_prompts,
             ctx,
             eval_cfg,
         )
     elif args.mode == "gepa":
-        run_gepa_training(
+        final_eval = run_gepa_training(
             gepa_cfg,
-            prompts,
-            ctx,
-            eval_cfg,
-        )
-    else:  # args.mode == "eval"
-        eval_prompts = prompts[reinforce_cfg.eval_slice_start : reinforce_cfg.eval_slice_end]
-        eval_result = evaluate_asr(
+            train_prompts,
             eval_prompts,
-            args.eval_instruction,
             ctx,
             eval_cfg,
         )
-        print(f"Eval ASR: {eval_result.asr:.2%}")
-        print(f"Eval refusal_rate: {eval_result.refusal_rate:.2%}")
+    else:
+        print(f"Eval ASR: {final_eval.asr:.2%}")
+        print(f"Eval refusal_rate: {final_eval.refusal_rate:.2%}")
 
-
-    maybe_save_adapters(ctx, args.save_dir)
+    # Phase 7/8: final metrics now available; persist artifacts + manifest.
+    adapter_path = maybe_save_adapters(ctx, args.save_dir)
 
     results_dir = Path(args.results_dir).resolve()
     manifest = RunManifest(
@@ -668,10 +719,14 @@ def main() -> None:
             "run_seconds": time.time() - run_start,
         },
         extra={
-            "save_dir": args.save_dir,
+            "save_dir": adapter_path,
             "reinforce_csv": reinforce_cfg.csv_path,
             "gepa_csv": gepa_cfg.csv_path,
             "eval_method": args.eval_method,
+            "baseline_asr": baseline_eval.asr,
+            "baseline_refusal_rate": baseline_eval.refusal_rate,
+            "final_asr": final_eval.asr,
+            "final_refusal_rate": final_eval.refusal_rate,
         },
     )
     manifest_path = write_run_manifest(results_dir=results_dir, payload=manifest)

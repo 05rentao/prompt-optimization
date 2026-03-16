@@ -70,7 +70,7 @@ def resolve_device(device_override: str | None) -> str:
 
 
 def parse_args() -> argparse.Namespace:
-    """Parse CLI arguments for the Mark GEPA optimization pipeline."""
+    """Parse CLI arguments for the GEPA optimization pipeline."""
     defaults = load_default_config()
     global_defaults = defaults["global"]
     run_defaults = defaults["runs"]["gepa"]
@@ -263,7 +263,7 @@ def save_artifacts(
     write_json(metrics_json_path, metrics_payload)
 
     manifest = RunManifest(
-        mode="mark",
+        mode="gepa",
         runtime_profile=runtime_profile,
         seed=seed,
         dataset={
@@ -326,7 +326,8 @@ def save_artifacts(
 
 
 def main() -> None:
-    """Run full Mark pipeline: load data, optimize, evaluate, and save outputs."""
+    """Run full GEPA pipeline: load data, optimize, evaluate, and save outputs."""
+    # Phase 1: parse args + defaults.
     args = parse_args()
     defaults = load_default_config()
     global_defaults = defaults["global"]
@@ -340,36 +341,22 @@ def main() -> None:
     reflection_api_key = reflection_defaults["api_key"]
     runtime_profile = global_defaults["runtime_profile"]
 
-    root_dir = Path(args.root_dir).resolve()
-    results_dir = Path(args.results_dir).resolve()
-    results_dir.mkdir(parents=True, exist_ok=True)
+    # Phase 2: resolve device + evaluation config.
     device = resolve_device(args.device)
-
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    sns.set_theme(style="whitegrid")
-
-    hf_token = resolve_hf_token()
-
-    train_data, val_data, _ = load_harmbench_subset(
-        dataset_name=args.dataset_name,
-        dataset_config=args.dataset_config,
-        split=args.dataset_split,
-        train_size=args.train_size,
-        val_size=args.val_size,
-        seed=args.seed,
-        hf_token=hf_token,
-    )
-    
-    print(f"Loaded train={len(train_data)}, val={len(val_data)} from {args.dataset_name}:{args.dataset_split}")
-
-    target_cfg = TargetModelConfig(model_id=target_model_name, max_new_tokens=args.max_tokens)
-    target_session = load_target_model(target_cfg)
     eval_cfg = EvaluationConfig(
         method=args.eval_method,
         refusal_threshold=args.refusal_threshold,
         asr_threshold=args.asr_threshold,
     )
+
+    # Keep RNG setup close to startup for reproducibility.
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    sns.set_theme(style="whitegrid")
+
+    # Phase 3: build long-lived runtime sessions.
+    target_cfg = TargetModelConfig(model_id=target_model_name, max_new_tokens=args.max_tokens)
+    target_session = load_target_model(target_cfg)
     judge_session = RuntimeCatalog.build_judge_session(HarmbenchJudgeConfig()) if args.eval_method == "judge" else None
     reflection_gateway = RuntimeCatalog.build_reflection_gateway(
         OpenAIReflectionConfig(
@@ -380,6 +367,24 @@ def main() -> None:
 
     # Reflection is still OpenAI-compatible vLLM.
     verify_reflection_client(reflection_gateway, reflection_model_name)
+
+    # Phase 4: load dataset.
+    hf_token = resolve_hf_token()
+    train_data, val_data, _ = load_harmbench_subset(
+        dataset_name=args.dataset_name,
+        dataset_config=args.dataset_config,
+        split=args.dataset_split,
+        train_size=args.train_size,
+        val_size=args.val_size,
+        seed=args.seed,
+        hf_token=hf_token,
+    )
+    print(f"Loaded train={len(train_data)}, val={len(val_data)} from {args.dataset_name}:{args.dataset_split}")
+
+    # Phase 5: baseline evaluation.
+    root_dir = Path(args.root_dir).resolve()
+    results_dir = Path(args.results_dir).resolve()
+    results_dir.mkdir(parents=True, exist_ok=True)
 
     baseline_metrics, baseline_df = evaluate_system_prompt(
         system_prompt=args.baseline_system_prompt,
@@ -396,6 +401,7 @@ def main() -> None:
     for key, value in baseline_metrics.items():
         print(f"  {key}: {value:.4f}")
 
+    # Phase 6: optimization loop.
     gepa_result, optimizer_trace, run_seconds = run_gepa_optimization(
         args=args,
         target_session=target_session,
@@ -412,6 +418,7 @@ def main() -> None:
     optimized_system_prompt = best_candidate.get("system_prompt", args.baseline_system_prompt)
     print("Best score from GEPA:", best_score)
 
+    # Phase 7: final evaluation.
     optimized_metrics, optimized_df = evaluate_system_prompt(
         system_prompt=optimized_system_prompt,  # evaluate with the optimized prompt from GEPA
         examples=val_data,
@@ -434,6 +441,7 @@ def main() -> None:
         ]
     )
 
+    # Phase 8: persist artifacts + manifest.
     save_artifacts(  # save graphs, csvs etc.
         root_dir=root_dir,
         results_dir=results_dir,

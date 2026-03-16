@@ -10,6 +10,7 @@ This file is the merged guide for both `src/README.md` and `src/README_guide.md`
 - `runs/coev_run.py`
 - `runs/coev_v2_run.py`
 - `runs/gepa_run.py`
+- `runs/adversary_run.py`
 
 ### Modularity rules
 
@@ -27,6 +28,7 @@ Use this when you want to stand up or modify a run script quickly.
 - Start from `runs/gepa_run.py` if you are optimizing prompts with reflection loops.
 - Start from `runs/coev_run.py` for baseline CoEV REINFORCE flow.
 - Start from `runs/coev_v2_run.py` for staged CoEV + GEPA prompt evolution.
+- Start from `runs/adversary_run.py` for adversary-only weight fine-tuning (no prompt optimization).
 
 ### 2) Keep the canonical script shape
 
@@ -52,6 +54,7 @@ Most scripts should follow this order:
 uv run runs/gepa_run.py --help
 uv run runs/coev_run.py --help
 uv run runs/coev_v2_run.py --help
+uv run runs/adversary_run.py --help
 ```
 
 ### 5) Best way to run scripts
@@ -60,7 +63,7 @@ Use `configs/default.yaml` as the source of truth for stable runtime values (mod
 
 ```bash
 # Recommended: use the unified wrapper.
-uv run scripts/run_unified_experiment.py --mode mark
+uv run scripts/run_unified_experiment.py --mode gepa
 uv run scripts/run_unified_experiment.py --mode coev --coev-mode reinforce
 uv run scripts/run_unified_experiment.py --mode coev_v2 --coev-v2-mode coev
 
@@ -68,6 +71,7 @@ uv run scripts/run_unified_experiment.py --mode coev_v2 --coev-v2-mode coev
 uv run runs/gepa_run.py --show-progress
 uv run runs/coev_run.py --mode reinforce
 uv run runs/coev_v2_run.py --mode coev
+uv run runs/adversary_run.py --mode train
 ```
 
 ### 6) Minimal runtime wiring example
@@ -256,8 +260,8 @@ Single runtime composition entrypoint:
 
 ### GEPA path (`runs/gepa_run.py`)
 1. Parse run config and resolve device.
-2. Load HarmBench train/val data.
-3. Build target session, optional judge session, and reflection gateway.
+2. Build target session, optional judge session, and reflection gateway.
+3. Load HarmBench train/val data.
 4. Evaluate baseline prompt using shared evaluators.
 5. Run `run_gepa_prompt_optimization(...)`.
 6. Evaluate optimized prompt and persist artifacts/manifest.
@@ -268,6 +272,13 @@ Single runtime composition entrypoint:
 3. Run staged REINFORCE updates.
 4. Run dual-role GEPA optimization at stage boundaries.
 5. Re-evaluate and save full artifacts + `RunManifest`.
+
+### Adversary-only path (`runs/adversary_run.py`)
+1. Parse run config and resolve device.
+2. Build adversary/target/judge sessions via `RuntimeCatalog`.
+3. Load HarmBench train/val data.
+4. Fine-tune adversary weights with REINFORCE from model judgment rewards.
+5. Evaluate on held-out prompts and save artifacts + `RunManifest`.
 
 ## Implementation Guidance
 
