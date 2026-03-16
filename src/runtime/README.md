@@ -2,6 +2,12 @@
 
 Runtime layer for shared generation, judging, evaluation, and GEPA optimization primitives used by experiment entrypoints in `runs/`.
 
+For end-to-end onboarding and run commands, see:
+
+- `README.md`
+- `docs/getting-started.md`
+- `src/README.md`
+
 ## Config model
 
 Runtime and model defaults are centralized in `configs/default.yaml`.
@@ -50,6 +56,8 @@ Runtime and model defaults are centralized in `configs/default.yaml`.
 ## Script invocation reference
 
 Best practice is to use `uv run` from repo root and treat `configs/default.yaml` as the source of truth for stable runtime values.
+
+For fuller run mode details and setup guidance, use `docs/getting-started.md`.
 
 ### Direct script calls
 

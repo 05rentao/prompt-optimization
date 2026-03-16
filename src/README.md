@@ -1,6 +1,12 @@
 # `src/` and `src/runtime/` Guide
 
-This file is the merged guide for both `src/README.md` and `src/README_guide.md`.
+This file is the contributor guide for the shared library layer under `src/`.
+
+For onboarding and run commands, use:
+
+- `README.md` (project overview + quick start)
+- `docs/getting-started.md` (full setup and runbook)
+- `src/runtime/README.md` (runtime API reference)
 
 ## Overview
 
@@ -62,7 +68,7 @@ uv run runs/adversary_run.py --help
 Use `configs/default.yaml` as the source of truth for stable runtime values (model IDs, reflection endpoint, runtime profile). Override only experiment controls on CLI.
 
 ```bash
-# Recommended: use the unified wrapper.
+# Recommended: use the unified wrapper (details in docs/getting-started.md).
 uv run scripts/run_unified_experiment.py --mode gepa
 uv run scripts/run_unified_experiment.py --mode coev --coev-mode reinforce
 uv run scripts/run_unified_experiment.py --mode coev_v2 --coev-v2-mode coev
