@@ -1,0 +1,23 @@
+{
+  "config": {
+    "mode": "train",
+    "dataset_name": "walledai/HarmBench",
+    "dataset_config": "standard",
+    "dataset_split": "train",
+    "train_size": 8,
+    "val_size": 4,
+    "eval_method": "heuristic",
+    "iterations": 2,
+    "run_seconds": 150.24343037605286
+  },
+  "baseline": {
+    "asr": 0.75,
+    "refusal_rate": 0.75,
+    "n_samples": 4
+  },
+  "final": {
+    "asr": 0.75,
+    "refusal_rate": 1.0,
+    "n_samples": 4
+  }
+}

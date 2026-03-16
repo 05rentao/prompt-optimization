@@ -1,0 +1,33 @@
+{
+  "mode": "coev_v2",
+  "runtime_profile": "smoke",
+  "seed": 42,
+  "dataset": {
+    "dataset_name": "walledai/HarmBench",
+    "dataset_config": "standard",
+    "dataset_split": "train",
+    "train_size": 8,
+    "val_size": 4
+  },
+  "models": {
+    "adversary_model": "unsloth/Qwen2.5-7B-Instruct-bnb-4bit",
+    "target_model": "meta-llama/Llama-2-7b-chat-hf",
+    "judge_model": "cais/HarmBench-Mistral-7b-val-cls",
+    "reflection_model_name": "meta-llama/Llama-3.1-8B-Instruct"
+  },
+  "budget": {
+    "stages": 1,
+    "iters_per_stage": 1,
+    "max_metric_calls": 8,
+    "run_seconds": 274.9601411819458
+  },
+  "endpoints": {
+    "reflection_base_url": "http://127.0.0.1:8001/v1"
+  },
+  "extra": {
+    "optimized_prompts_path": "/root/prompt-optimization/results/smoke/20260316_165558/coev_v2/coev_v2_optimized_prompts.json",
+    "metrics_json_path": "/root/prompt-optimization/results/smoke/20260316_165558/coev_v2/coev_v2_run_metrics.json",
+    "training_csv_name": "coev_v2_training_log.csv",
+    "eval_method": "heuristic"
+  }
+}

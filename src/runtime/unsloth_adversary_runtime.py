@@ -2,19 +2,20 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import Any
 
+from unsloth import FastLanguageModel
 import torch
 import torch.nn.functional as f
-from unsloth import FastLanguageModel
 
 from .config import UnslothAdversaryConfig
 from .interfaces import LoRABridge
 
-
 class UnslothAdversaryRuntime(LoRABridge):
     """Wraps an Unsloth PEFT model and exposes sampling/save helpers."""
+    _sample_lock = threading.Lock()
 
     def __init__(self, cfg: UnslothAdversaryConfig) -> None:
         """Load base model and attach LoRA adapters."""
@@ -32,6 +33,9 @@ class UnslothAdversaryRuntime(LoRABridge):
             bias="none",
             use_gradient_checkpointing="unsloth",
         )
+        # Ensure Unsloth inference buffers are initialized for generate().
+        FastLanguageModel.for_inference(self.model)
+        self.model.eval()
         self.tokenizer = tokenizer
 
     def __getattr__(self, name: str) -> Any:
@@ -54,26 +58,46 @@ class UnslothAdversaryRuntime(LoRABridge):
         """Sample completion text and token log-prob aggregates."""
         prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         enc = self.tokenizer(prompt, return_tensors="pt", truncation=True, max_length=max_length).to(device)
-        with torch.no_grad():
-            gen_ids = self.model.generate(
-                **enc,
-                max_new_tokens=max_new_tokens,
-                do_sample=True,
-                temperature=temperature,
-                top_p=top_p,
-                use_cache=True,
-            )
-            prompt_len = enc["input_ids"].shape[-1]
-            completion_ids = gen_ids[:, prompt_len:]
+        with self._sample_lock:
+            # Unsloth mutates module-local temp buffers during fast generate.
+            # Serializing this path avoids cross-thread buffer races.
+            self.model.eval()
+            FastLanguageModel.for_inference(self.model)
+            with torch.no_grad():
+                try:
+                    gen_ids = self.model.generate(
+                        **enc,
+                        max_new_tokens=max_new_tokens,
+                        do_sample=True,
+                        temperature=temperature,
+                        top_p=top_p,
+                        use_cache=True,
+                    )
+                except AttributeError as exc:
+                    # Rarely, temp buffers can still be absent after training-mode flips.
+                    if "temp_QA" in str(exc):
+                        FastLanguageModel.for_inference(self.model)
+                        gen_ids = self.model.generate(
+                            **enc,
+                            max_new_tokens=max_new_tokens,
+                            do_sample=True,
+                            temperature=temperature,
+                            top_p=top_p,
+                            use_cache=True,
+                        )
+                    else:
+                        raise
+                prompt_len = enc["input_ids"].shape[-1]
+                completion_ids = gen_ids[:, prompt_len:]
 
-            out = self.model(input_ids=gen_ids, use_cache=False)
-            logits = out.logits
-            log_probs = f.log_softmax(logits[:, :-1, :], dim=-1)
+                out = self.model(input_ids=gen_ids, use_cache=False)
+                logits = out.logits
+                log_probs = f.log_softmax(logits[:, :-1, :], dim=-1)
 
-            start = prompt_len - 1
-            end = start + completion_ids.shape[-1]
-            gen_log_probs = log_probs[:, start:end, :]
-            token_logprobs = torch.gather(gen_log_probs, -1, completion_ids.unsqueeze(-1)).squeeze(-1)
+                start = prompt_len - 1
+                end = start + completion_ids.shape[-1]
+                gen_log_probs = log_probs[:, start:end, :]
+                token_logprobs = torch.gather(gen_log_probs, -1, completion_ids.unsqueeze(-1)).squeeze(-1)
 
         completion_text = self.tokenizer.decode(completion_ids[0], skip_special_tokens=True)
         return {

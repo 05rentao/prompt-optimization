@@ -1,0 +1,34 @@
+{
+  "mode": "coev_reinforce",
+  "runtime_profile": "smoke",
+  "seed": 42,
+  "dataset": {
+    "dataset_name": "walledai/HarmBench",
+    "dataset_config": "standard",
+    "dataset_split": "train",
+    "train_size": 8,
+    "val_size": 4
+  },
+  "models": {
+    "adversary_model": "unsloth/Qwen2.5-7B-Instruct-bnb-4bit",
+    "target_model": "meta-llama/Llama-2-7b-chat-hf",
+    "judge_model": "cais/HarmBench-Mistral-7b-val-cls"
+  },
+  "budget": {
+    "reinforce_iterations": 2,
+    "gepa_stages": 1,
+    "gepa_iters_per_stage": 1,
+    "run_seconds": 274.64054560661316
+  },
+  "endpoints": {},
+  "extra": {
+    "save_dir": null,
+    "reinforce_csv": "smoke_test_reinforce.csv",
+    "gepa_csv": "smoke_test_gepa.csv",
+    "eval_method": "heuristic",
+    "baseline_asr": 0.75,
+    "baseline_refusal_rate": 0.75,
+    "final_asr": 0.75,
+    "final_refusal_rate": 0.75
+  }
+}
