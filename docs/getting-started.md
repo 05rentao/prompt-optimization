@@ -220,6 +220,45 @@ If a model check fails, confirm:
 
 This section explains each config block in plain language.
 
+### 7.1 Swapability status (what is truly config-driven)
+
+Legend:
+
+- Easy swap: changing the config value changes runtime behavior directly.
+- Partial/in progress: key exists and is read, but behavior is limited or only used in metadata.
+- Deprecated/legacy: key exists for compatibility/docs but is not part of the active runtime path.
+
+| Config path | Status | What you can swap | Notes |
+|---|---|---|---|
+| `global.dataset_name` | Easy swap | dataset repo id (for example `walledai/HarmBench`) | Used by all run scripts. |
+| `global.dataset_config` | Easy swap | dataset subset/config name | Used by all run scripts. |
+| `global.dataset_split` | Easy swap | split name (for example `train`, `test`) | Used by all run scripts. |
+| `global.seed` | Easy swap | random seed integer | Used by all run scripts. |
+| `global.device` | Easy swap | `cuda`, `cpu`, or `null` for auto | Passed into runtime device resolution. |
+| `global.runtime_profile` | Partial/in progress | label string (for manifests/reporting) | Currently metadata/profile label, not a backend selector. |
+| `runtime.models.adversary_model_id` | Easy swap (within current backend) | Unsloth/HF model id or local path compatible with current Unsloth loader | Used by `coev`, `coev_v2`, and `adversary` runs. |
+| `runtime.models.target_model_name` | Easy swap (within current backend) | HF model id or local path compatible with `transformers` local target runtime | Used by all active runs. |
+| `runtime.models.reflection_model_name` | Easy swap | model id served by reflection OpenAI-compatible endpoint | Used by GEPA and CoEV v2 paths. |
+| `runtime.models.judge_model_id` | Partial/in progress | Intended: HarmBench judge model id | Documented in config, but current judge construction still uses runtime defaults in scripts. |
+| `runtime.reflection.base_url` | Easy swap | OpenAI-compatible endpoint URL | Used by GEPA and CoEV v2 reflection gateway. |
+| `runtime.reflection.api_key` | Easy swap | endpoint auth token (or `EMPTY` for local vLLM setups) | Used by GEPA and CoEV v2 reflection gateway. |
+| `runtime.legacy_target_vllm.base_url` | Deprecated/legacy | N/A in current active runs | Kept for legacy compatibility docs; not wired in current pipelines. |
+| `runtime.legacy_target_vllm.api_key` | Deprecated/legacy | N/A in current active runs | Kept for legacy compatibility docs; not wired in current pipelines. |
+| `runs.gepa.*` | Easy swap | GEPA train/val size, budget, thresholds, prompt, result path | Active and wired in `runs/gepa_run.py`. |
+| `runs.coev.*` | Easy swap | CoEV modes, schedules, eval settings, prompt seeds, csv paths | Active and wired in `runs/coev_run.py`. |
+| `runs.coev_v2.*` | Easy swap | CoEV v2 schedules, GEPA budgets, token limits, prompt seeds, output names | Active and wired in `runs/coev_v2_run.py`. |
+| `runs.adversary.*` | Easy swap | adversary training schedule, eval settings, instruction/prompt, output names | Active and wired in `runs/adversary_run.py`. |
+| `scripts.unified_runner.gepa_results_dir` | Easy swap | default GEPA output root | Used by unified runner defaults. |
+| `scripts.unified_runner.coev_results_dir` | Easy swap | default CoEV output root | Used by unified runner defaults. |
+| `scripts.unified_runner.adversary_results_dir` | Easy swap | default adversary output root | Used by unified runner defaults. |
+| `scripts.unified_runner.runtime_profile` | Deprecated/legacy | N/A in current launcher logic | Present in config/docs but not used by `scripts/run_unified_experiment.py`. |
+
+### 7.2 Practical interpretation
+
+- Current model/backend modularity is "model-id swappable" for the existing backend choices (local HF target, Unsloth adversary, OpenAI-compatible reflection).
+- It is not yet "backend swappable by config only" (for example no config-only switch from local HF target to a target vLLM backend).
+- Keys in `runtime.legacy_target_vllm.*` and `scripts.unified_runner.runtime_profile` should be treated as legacy placeholders unless/until backend-profile switching is implemented.
+
 ### `global`
 
 - `dataset_name`: dataset repository to load (default HarmBench).
