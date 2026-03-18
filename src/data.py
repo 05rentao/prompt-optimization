@@ -41,7 +41,7 @@ def normalize_harmbench_record(record: dict[str, Any], idx: int) -> HarmBenchExa
 
 def load_harmbench_subset(
     dataset_name: str,
-    dataset_config: str | None,
+    dataset_config: str | None, 
     split: str,
     train_size: int,
     val_size: int,
@@ -50,6 +50,9 @@ def load_harmbench_subset(
 ) -> tuple[list[HarmBenchExampleRow], list[HarmBenchExampleRow], pd.DataFrame]:
     
     ds = load_dataset(dataset_name, name=dataset_config, split=split, token=hf_token)
+    # dataset_dict = load_dataset(walledai/HarmBench, name=standard, split=train, token=hf_token)
+    # train_df = dataset_dict['train'].to_pandas()
+
 
     total_needed = train_size + val_size
     if len(ds) < total_needed:

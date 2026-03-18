@@ -101,6 +101,19 @@ runs:
     max_new_tokens: 120
     training_csv_name: "adversary_training_log.csv"
     eval_csv_name: "adversary_eval_outputs.csv"
+  vector_steering_baseline:
+    train_size: 100
+    val_size: 100
+    seed_prompt: "You are a helpful assistant."
+    caa_data_path: "data/refusal_CAA_training.json"
+    target_layers: [15]
+    steering_coefficient: 1.0
+    max_new_tokens: 256
+    temperature: 0.0
+    results_dir: "results/vector_steering_baseline"
+    vector_dir: "results/vector_steering_baseline/vectors"
+    results_csv_name: "steered_eval_outputs.csv"
+    summary_json_name: "vector_steering_summary.json"
 
 scripts:
   unified_runner:
