@@ -1,0 +1,40 @@
+[project]
+name = "prompt-optimization"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Shiv Lele", email = "shivlele2005@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    # Core runtime
+    "torch>=2.0",
+    "transformers>=4.36",
+    "accelerate>=0.25",
+    "bitsandbytes>=0.41",
+    "datasets>=2.14",
+    "tqdm>=4.65",
+    "pyyaml>=6.0",
+    # Adversary / steering stack
+    "unsloth",          # version-less: let uv pick a compatible release
+    "peft>=0.18.1",
+    # Evaluation / training utilities
+    "scikit-learn>=1.5.0",
+    "gepa>=0.1.0",
+    "requests>=2.32.5",
+    "vllm==0.16.0",
+    "pandas>=2.3.3",
+    "hf-transfer>=0.1.9",
+    "matplotlib>=3.10.8",
+    "seaborn>=0.13.2",
+    "litellm>=1.82.2",
+    "unsloth-zoo>=2026.3.2",
+]
+
+[build-system]
+requires = ["uv_build>=0.10.4,<0.11.0"]
+build-backend = "uv_build"
+
+[tool.uv]
+package = false

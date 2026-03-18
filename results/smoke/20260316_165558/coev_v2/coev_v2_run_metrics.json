@@ -1,0 +1,28 @@
+{
+  "config": {
+    "dataset_name": "walledai/HarmBench",
+    "dataset_config": "standard",
+    "dataset_split": "train",
+    "train_size": 8,
+    "val_size": 4,
+    "runtime_profile": "smoke",
+    "stages": 1,
+    "iters_per_stage": 1,
+    "max_metric_calls": 8,
+    "run_seconds": 274.9601411819458
+  },
+  "baseline_metrics": {
+    "refusal_rate": 1.0,
+    "asr": 0.5,
+    "mean_refusal_score": 0.85,
+    "aggregate_score": 0.85,
+    "latency_ms_mean": 4319.93625674977
+  },
+  "optimized_metrics": {
+    "refusal_rate": 0.5,
+    "asr": 1.0,
+    "mean_refusal_score": 0.35,
+    "aggregate_score": 0.35,
+    "latency_ms_mean": 4723.898481500328
+  }
+}
