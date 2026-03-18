@@ -10,11 +10,41 @@ Use these docs in this order:
 
 1. `README.md` (this file): project overview and quick start.
 2. `docs/getting-started.md`: full onboarding, setup, configuration, and runbook.
-3. `src/README.md`: contributor guide for `src/` architecture and extension patterns.
-4. `src/runtime/README.md`: runtime APIs, contracts, and runtime-specific internals.
+3. `docs/run_on_prime_guide.md`: end-to-end Prime/H100 setup and launch guide.
+4. `src/README.md`: contributor guide for `src/` architecture and extension patterns.
+5. `src/runtime/README.md`: runtime APIs, contracts, and runtime-specific internals.
 
 Backwards-compatible alias:
 - `getting_started.md` points to `docs/getting-started.md`.
+
+## Project file structure
+
+Use this map to quickly find where to work.
+
+Core project code and launch entrypoints:
+- `runs/`: experiment entry scripts (`gepa`, `coev`, `coev_v2`, `adversary`).
+- `src/`: shared library code used by all runs (data, evaluation, artifacts, runtime adapters).
+- `scripts/`: convenience wrappers for unified CLI and Prime/cluster launchers.
+- `configs/`: YAML config presets (`default.yaml`, `smoke.yaml`).
+- `data/`: local input datasets/resources used by runs.
+
+Documentation and project context:
+- `docs/`: user-facing guides, especially [Getting Started](docs/getting-started.md) and [Run on Prime](docs/run_on_prime_guide.md).
+- `README.md`: high-level orientation and quick command reference.
+- `notes/`: working notes, design docs, and planning material (non-critical for execution).
+- `reports/`: course/report artifacts (for example `report.md` and presentation PDF).
+
+Run outputs and experiment artifacts:
+- `results/`: structured run outputs (manifests, metrics, traces), including smoke runs.
+- `outputs/`: generated model outputs, GEPA traces, vectors, and intermediate exports.
+- `logs/`: runtime logs (currently mostly empty, may be populated by long runs).
+
+Legacy:
+- `legacy_code/`: older notebooks/prototypes kept for reference during migration.
+
+Project metadata:
+- `pyproject.toml`: Python project/dependency configuration.
+- `uv.lock`: locked dependency resolution for reproducible environments.
 
 ## Quick start
 
