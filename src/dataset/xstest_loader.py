@@ -35,7 +35,7 @@ from datasets import load_dataset
 # ---------------------------------------------------------------------------
 
 XSTEST_HF_REPO = "Paul/XSTest"
-XSTEST_SPLIT = "test"
+XSTEST_SPLIT = "train"
 
 SAFE_LABEL = "safe"
 UNSAFE_LABEL = "unsafe"
