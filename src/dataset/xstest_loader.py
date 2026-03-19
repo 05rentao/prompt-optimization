@@ -34,7 +34,7 @@ from datasets import load_dataset
 # Public constants
 # ---------------------------------------------------------------------------
 
-XSTEST_HF_REPO = "paul-rottger/xstest"
+XSTEST_HF_REPO = "Paul/XSTest"
 XSTEST_SPLIT = "test"
 
 SAFE_LABEL = "safe"
