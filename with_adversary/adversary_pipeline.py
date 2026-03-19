@@ -30,7 +30,10 @@ def bootstrap_deceptive_rewrite(prompt: str) -> str:
 
 @dataclass
 class AdversaryConfig:
-    model_name: str = "meta-llama/Meta-Llama-3-8B-Instruct"
+    # Default aligned with run_with_adversary.py temporary bring-up model.
+    model_name: str = "Qwen/Qwen2.5-7B-Instruct"
+    # Original fallback for one-line switch:
+    # model_name: str = "meta-llama/Meta-Llama-3-8B-Instruct"
     max_input_length: int = 768
     max_new_tokens: int = 196
     temperature: float = 0.8

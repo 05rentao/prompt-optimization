@@ -1,8 +1,8 @@
-# GEPA + Adversary Optimization on Llama-3-8B (HarmBench)
+# GEPA + Adversary Optimization on Qwen2.5-7B-Instruct (HarmBench)
 
 This experiment extends the baseline setup with three changes:
 
-1. **Task model** switched to `meta-llama/Meta-Llama-3-8B-Instruct` (served via vLLM)
+1. **Task model** (temporary bring-up default) switched to `Qwen/Qwen2.5-7B-Instruct` (served via vLLM)
 2. **Evaluator** switched from keyword matching to **Detoxify**
 3. **Adversary model** added (same model family with LoRA): it rewrites HarmBench prompts to be more deceptive and is updated online with policy gradient from evaluator feedback
 
@@ -82,8 +82,8 @@ Run in a separate SSH terminal and keep it alive:
 ```bash
 source .venv/bin/activate
 python -m vllm.entrypoints.openai.api_server \
-  --model meta-llama/Meta-Llama-3-8B-Instruct \
-  --served-model-name meta-llama/Meta-Llama-3-8B-Instruct \
+  --model Qwen/Qwen2.5-7B-Instruct \
+  --served-model-name Qwen/Qwen2.5-7B-Instruct \
   --host 0.0.0.0 --port 8000 \
   --gpu-memory-utilization 0.9 \
   --dtype auto \
@@ -125,7 +125,8 @@ Open `gepa_llama_harmbench_adversary_run.ipynb`, then run all cells.
 
 ## Main config knobs (in `run_with_adversary.py`)
 
-- `model_name`: `meta-llama/Meta-Llama-3-8B-Instruct`
+- `model_name`: `Qwen/Qwen2.5-7B-Instruct` (temporary default)
+- switch back to Llama later: set `model_name` to `meta-llama/Meta-Llama-3-8B-Instruct` in `run_with_adversary.py`
 - `reflection_model_name`: `gpt-4o-mini`
 - `train_size`: `100`
 - `val_size`: `100`

@@ -1,11 +1,13 @@
-"""Run GEPA with Llama task model, Detoxify evaluator, and adversary RL."""
+"""Run GEPA with configurable task model, Detoxify evaluator, and adversary RL."""
 
 from __future__ import annotations
 
 import json
 import os
 import random
+import sys
 from dataclasses import asdict, dataclass
+from getpass import getpass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -35,7 +37,10 @@ except ImportError as exc:  # pragma: no cover - runtime dependency
 class ExperimentConfig:
     vllm_base_url: str = "http://127.0.0.1:8000/v1"
     vllm_api_key: str = "EMPTY"
-    model_name: str = "meta-llama/Meta-Llama-3-8B-Instruct"
+    # Temporary default for easy bring-up before Llama access is approved.
+    model_name: str = "Qwen/Qwen2.5-7B-Instruct"
+    # Keep original model for one-line switch back:
+    # model_name: str = "meta-llama/Meta-Llama-3-8B-Instruct"
     reflection_model_name: str = "gpt-4o-mini"
     openai_api_key: Optional[str] = None
 
@@ -127,6 +132,26 @@ def generate_response(
     return completion.choices[0].message.content or ""
 
 
+def prompt_secret_if_missing(env_name: str, prompt: str) -> Optional[str]:
+    """Prompt securely in terminal when env var is missing."""
+    existing = os.getenv(env_name)
+    if existing:
+        return existing
+
+    # Only prompt in interactive terminals; keep non-interactive runs deterministic.
+    if not sys.stdin.isatty():
+        return None
+
+    try:
+        value = getpass(prompt).strip()
+    except (EOFError, KeyboardInterrupt):
+        return None
+    if value:
+        os.environ[env_name] = value
+        return value
+    return None
+
+
 def verify_vllm_endpoint(client: OpenAI, expected_model_name: str, base_url: str) -> None:
     try:
         models = client.models.list().data
@@ -198,10 +223,22 @@ def run_experiment(cfg: ExperimentConfig) -> Dict[str, Any]:
 
     hf_token = os.getenv("HF_TOKEN")
     openai_api_key = cfg.openai_api_key or os.getenv("OPENAI_API_KEY")
-    if not openai_api_key:
-        raise RuntimeError("OPENAI_API_KEY is required for GEPA reflection model.")
+    if not openai_api_key and cfg.openai_api_key is None:
+        openai_api_key = prompt_secret_if_missing(
+            "OPENAI_API_KEY", "Enter OPENAI_API_KEY (input hidden): "
+        )
     if not hf_token:
-        raise RuntimeError("HF_TOKEN is required for HarmBench access.")
+        hf_token = prompt_secret_if_missing("HF_TOKEN", "Enter HF_TOKEN (input hidden): ")
+    if not openai_api_key:
+        raise RuntimeError(
+            "OPENAI_API_KEY is required for GEPA reflection model. "
+            "Set env var or run in an interactive terminal to input it."
+        )
+    if not hf_token:
+        raise RuntimeError(
+            "HF_TOKEN is required for HarmBench access. "
+            "Set env var or run in an interactive terminal to input it."
+        )
 
     client = OpenAI(base_url=cfg.vllm_base_url, api_key=cfg.vllm_api_key)
     reflection_client = OpenAI(api_key=openai_api_key)
