@@ -12,10 +12,11 @@ import unsloth
 from unsloth import FastLanguageModel
 
 import argparse
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 import pandas as pd
 import seaborn as sns
@@ -183,23 +184,52 @@ def target_generate(
     return output, elapsed_ms
 
 
+def pad_gen_ids_batch(
+    batch_gen_ids: Sequence[torch.Tensor], pad_id: int
+) -> tuple[torch.Tensor, list[int]]:
+    """Right-pad (1, L) tensors to a common L for batched forward; keep valid lengths."""
+    lengths = [int(x.shape[-1]) for x in batch_gen_ids]
+    max_len = max(lengths)
+    rows: list[torch.Tensor] = []
+    for x in batch_gen_ids:
+        if x.dim() != 2 or x.size(0) != 1:
+            raise ValueError(f"expected gen_ids shape (1, L), got {tuple(x.shape)}")
+        L = x.size(1)
+        if L < max_len:
+            pad = torch.full(
+                (1, max_len - L),
+                pad_id,
+                dtype=x.dtype,
+                device=x.device,
+            )
+            x = torch.cat([x, pad], dim=1)
+        rows.append(x)
+    return torch.cat(rows, dim=0), lengths
+
+
 def rloo_update_batch_sgd(
-    model: Any, 
-    optimizer: Any, 
-    gen_ids: torch.Tensor, 
-    prompt_lens: list[int], 
-    rewards: torch.Tensor
+    model: Any,
+    optimizer: Any,
+    gen_ids: torch.Tensor,
+    prompt_lens: list[int],
+    rewards: torch.Tensor,
+    valid_seq_lens: list[int] | None = None,
 ) -> tuple[float, Any]:
     """
     Apply an RLOO (REINFORCE Leave-One-Out) SGD step.
-    
+
     Args:
-        gen_ids: Tensor of shape (K, seq_len) containing prompt + completion tokens.
-        prompt_lens: List of lengths for the prompt portion of each sequence.
+        gen_ids: Tensor of shape (K, seq_len) containing prompt + completion tokens
+            (rows may be right-padded to a common seq_len).
+        prompt_lens: Length of the prompt prefix for each sequence.
         rewards: Tensor of shape (K,) containing the reward for each completion.
+        valid_seq_lens: Optional length of each row **before** padding (exclusive end index
+            for non-pad tokens). If None, each row is assumed valid through gen_ids.size(1).
     """
     model.train()
-    
+    if valid_seq_lens is None:
+        valid_seq_lens = [int(gen_ids.size(1))] * int(gen_ids.size(0))
+
     # 1. Forward pass to get logits for the entire batch
     out = model(input_ids=gen_ids, use_cache=False)
     logits = out.logits
@@ -210,12 +240,13 @@ def rloo_update_batch_sgd(
     logprob_sums = []
     for i in range(gen_ids.size(0)):
         prompt_len = int(prompt_lens[i])
-        comp_ids = gen_ids[i, prompt_len:].clone()
-        
+        valid_end = int(valid_seq_lens[i])
+        comp_ids = gen_ids[i, prompt_len:valid_end].clone()
+
         if comp_ids.numel() == 0:
             logprob_sums.append(torch.tensor(0.0, device=gen_ids.device))
             continue
-            
+
         # The log-prob for token at index 't' is found at logits index 't-1'
         start = prompt_len - 1
         end = start + comp_ids.size(0)
@@ -494,8 +525,12 @@ def main() -> None:
     args.adversary_model_id = model_defaults["adversary_model_id"]
     args.task_model_name = model_defaults["target_model_name"]
     args.reflection_model_name = model_defaults["reflection_model_name"]
-    args.reflection_vllm_base_url = reflection_defaults["base_url"]
-    args.reflection_vllm_api_key = reflection_defaults["api_key"]
+    args.reflection_vllm_base_url = os.environ.get(
+        "REFLECTION_VLLM_BASE_URL", reflection_defaults["base_url"]
+    )
+    args.reflection_vllm_api_key = os.environ.get(
+        "REFLECTION_VLLM_API_KEY", reflection_defaults["api_key"]
+    )
 
     # Phase 2: resolve device + evaluation config.
     run_start = time.time()
@@ -632,10 +667,12 @@ def main() -> None:
     print("Starting CoEV v2 training...")
     for stage in range(coev_cfg.stages):
         print(f"\n--- Stage {stage} ---")
+        stage_prompts: list[str] = []
         for i in range(coev_cfg.iters_per_stage):  # each loop gradient updates to the adversary
             idx = torch.randint(0, len(train_prompts), ()).item()
             original_prompt = train_prompts[idx]
-            
+            stage_prompts.append(original_prompt)
+
             K = 4  # Set your RLOO sample count
             batch_gen_ids = []
             batch_rewards = []
@@ -651,7 +688,7 @@ def main() -> None:
                 )
                 adv_rewrite = sample["completion_text"].strip()
                 
-                 target_resp, _ = target_generate(
+                target_resp, _ = target_generate(
                     prompt=adv_rewrite,
                     target_session=ctx.target_session,
                     device=ctx.device,
@@ -669,13 +706,20 @@ def main() -> None:
                 batch_rewards.append(reward)
                 batch_prompt_lens.append(sample["prompt_len"])
 
-            # Stack them to pass to the updated SGD function
-            loss_val, _ = reinforce_update_batch_sgd(
+            tok = model.tokenizer
+            pad_id = tok.pad_token_id
+            if pad_id is None:
+                pad_id = tok.eos_token_id
+            if pad_id is None:
+                raise RuntimeError("Tokenizer has no pad_token_id or eos_token_id for batch padding.")
+            padded_ids, valid_lens = pad_gen_ids_batch(batch_gen_ids, int(pad_id))
+            loss_val, _ = rloo_update_batch_sgd(
                 model,
                 optimizer,
-                torch.cat(batch_gen_ids, dim=0),
+                padded_ids,
                 batch_prompt_lens,
                 torch.tensor(batch_rewards, dtype=torch.float32, device=device),
+                valid_seq_lens=valid_lens,
             )
 
             training_rows.append(

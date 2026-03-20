@@ -78,6 +78,8 @@ class HarmbenchJudgeConfig:
     """Configuration for HarmBench judge model loading."""
 
     model_id: str = "cais/HarmBench-Mistral-7b-val-cls"
+    #: NF4 4-bit on GPU (~4GB weights vs ~14GB bf16). Set False only if you need exact bf16 judge.
+    load_in_4bit: bool = True
 
 
 @dataclass

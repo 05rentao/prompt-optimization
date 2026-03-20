@@ -64,11 +64,20 @@ cleanup_vllm() {
   fuser -k "${REFLECTION_PORT}/tcp" || true
 }
 
+port_is_open() {
+  local port="$1"
+  if command -v nc >/dev/null 2>&1; then
+    nc -z 127.0.0.1 "${port}" 2>/dev/null
+    return $?
+  fi
+  (exec 3<>/dev/tcp/127.0.0.1/"${port}") 2>/dev/null
+}
+
 wait_for_port() {
   local port="$1"
   local name="$2"
   echo "Waiting for ${name} on port ${port}..."
-  until nc -z 127.0.0.1 "${port}"; do
+  until port_is_open "${port}"; do
     sleep 2
   done
   echo "${name} is up on :${port}"

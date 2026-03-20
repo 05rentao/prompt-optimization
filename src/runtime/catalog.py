@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+from dataclasses import replace
+
 from .config import HarmbenchJudgeConfig, LocalHFConfig, OpenAIReflectionConfig, UnslothAdversaryConfig
 from .harmbench_judge_runtime import HarmbenchJudgeRuntime
 from .interfaces import GenerationSession
@@ -26,7 +29,10 @@ class RuntimeCatalog:
     @staticmethod
     def build_judge_session(cfg: HarmbenchJudgeConfig) -> GenerationSession:
         """Create a HarmBench judge session."""
-        return GenerationSession(runtime=HarmbenchJudgeRuntime(cfg.model_id))
+        env = os.environ.get("JUDGE_LOAD_IN_4BIT", "").lower()
+        if env in ("0", "false", "no"):
+            cfg = replace(cfg, load_in_4bit=False)
+        return GenerationSession(runtime=HarmbenchJudgeRuntime(cfg))
 
     @staticmethod
     def build_reflection_gateway(cfg: OpenAIReflectionConfig) -> OpenAIReflectionGateway:

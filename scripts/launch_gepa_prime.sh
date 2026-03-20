@@ -68,13 +68,22 @@ if [[ -z "${HF_TOKEN:-}" && -z "${HUGGINGFACE_HUB_TOKEN:-}" ]]; then
   echo "WARNING: HF_TOKEN/HUGGINGFACE_HUB_TOKEN not set. Gated models/datasets may fail."
 fi
 
+port_is_open() {
+  local port="$1"
+  if command -v nc >/dev/null 2>&1; then
+    nc -z 127.0.0.1 "${port}" 2>/dev/null
+    return $?
+  fi
+  (exec 3<>/dev/tcp/127.0.0.1/"${port}") 2>/dev/null
+}
+
 wait_for_port() {
   local port="$1"
   local name="$2"
   local timeout_s="${3:-180}"
   local waited=0
   echo "Waiting for ${name} on :${port} (timeout ${timeout_s}s)..."
-  until nc -z 127.0.0.1 "${port}"; do
+  until port_is_open "${port}"; do
     sleep 2
     waited=$((waited + 2))
     if [[ "${waited}" -ge "${timeout_s}" ]]; then
