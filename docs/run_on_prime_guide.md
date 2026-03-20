@@ -4,7 +4,7 @@
 
 ---
 
-## Phase 1: Instance Setup & Repository
+## Part 1: Instance Setup & Repository Management & Session Terminations
 
 Check make sure to checkout the H100 80GB x 1 GPU on Prime Intellect
 
@@ -69,9 +69,9 @@ Before launching long runs, verify your token and access:
 2. Run the checks below on the Prime instance:
 
 ```bash
-python3 -c "from huggingface_hub import whoami; print(whoami())"
+uv run python3 -c "from huggingface_hub import whoami; print(whoami())"
 
-python3 - <<'PY'
+uv run python3 - <<'PY'
 from huggingface_hub import model_info, dataset_info
 
 models = [
@@ -101,11 +101,15 @@ PY
 
 ### 4 Connect Cursor/VS Code to Prime (after CLI login works)
 
-#### 4.1 Add SSH host entry on your local machine
+
+#### 4.1 ***Your Local Machine***: Add SSH Host Entry
+
+> [!IMPORTANT]
+> Make sure you are on your local machine, so make a new terminal for this part!
 
 ```bash
 mkdir -p ~/.ssh
-nano ~/.ssh/config
+~/.ssh/config
 ```
 
 Paste:
@@ -159,9 +163,6 @@ You can terminate from the Prime dashboard, or by CLI:
 ```bash
 prime pods status <Pod_ID>
 
-# Use whichever command your prime CLI version supports:
-prime pods delete <Pod_ID>
-# or
 prime pods terminate <Pod_ID>
 ```
 
@@ -173,12 +174,18 @@ prime pods terminate <Pod_ID>
 
 ---
 
-## Phase 2: Launch runs with current scripts
+## Part 2: Launch runs with current scripts
 
 This repo now uses the unified launcher and run scripts in `scripts/` and `runs/`.
 
-### 6) Recommended launch commands
+### 6) Some launch commands for previous experiments
 
+set the PYTHONPATH environment variable
+```bash
+export PYTHONPATH=$PYTHONPATH:.
+```
+
+Using `scripts/launch_unified_prime.sh` script:
 ```bash
 # Main pipeline (CoEV v2)
 MODE=coev_v2 COEV_V2_MODE=coev bash scripts/launch_unified_prime.sh
@@ -192,6 +199,17 @@ MODE=coev COEV_MODE=reinforce bash scripts/launch_unified_prime.sh
 # Adversary-only
 MODE=adversary ADVERSARY_MODE=train bash scripts/launch_unified_prime.sh
 ```
+
+Using your own launch shell launch script: (replace with your script path)
+```bash
+chmod +x ./scripts/launch_vector_steering_prime.sh
+```
+
+Running a python file"
+```bash
+uv run <path-to-python-file>
+```
+
 
 ### 7) Typical runtime expectations on one H100 (rough guidance)
 
@@ -210,7 +228,7 @@ bash scripts/launch_smoke_prime.sh
 
 ---
 
-## Phase 3: Monitoring during runs
+## Part 3: Monitoring during runs
 
 ### 8) Watch process and GPU health
 
@@ -254,7 +272,7 @@ ls -lt results/gepa | head
 
 ---
 
-## Phase 4: Results and artifact interpretation
+## Part 4: Results and artifact interpretation
 
 ### 11) Primary artifact locations
 
