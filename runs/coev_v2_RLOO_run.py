@@ -555,7 +555,7 @@ def main() -> None:
         initial_attacker_instruction=args.initial_attacker_instruction,
         initial_defense_prompt=args.initial_defense_prompt,
     )
-    shared_gepa_cfg = GepaOptimizationConfig(
+    shared_gepa_cfg = GepaOptimizationConfig(  # TODO: refactor this shared_gepa_cfg and gepa_cfg
         max_metric_calls=args.max_metric_calls,
         max_tokens=args.gepa_max_tokens,
         temperature=args.gepa_temperature,

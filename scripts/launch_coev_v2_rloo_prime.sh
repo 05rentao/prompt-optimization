@@ -10,7 +10,6 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
-export ROOT_DIR
 
 # 8001 often conflicts on RunPod / shared hosts (proxy or stale bind). Override with REFLECTION_PORT if needed.
 REFLECTION_PORT="${REFLECTION_PORT:-8765}"
@@ -55,35 +54,6 @@ SAVE_DIR="${SAVE_DIR:-}"
 KEEP_VLLM_UP="${KEEP_VLLM_UP:-0}"
 
 mkdir -p logs results outputs data "${RESULTS_DIR}"
-
-# region agent log
-_agent_debug_log() {
-  local hypothesis_id="$1"
-  local message="$2"
-  # Must not use ${3:-{}}: bash merges the closing } with JSON that ends in }, corrupting ADL_DATA.
-  local data_json="${3:-"{}"}"
-  local py="${ROOT_DIR}/.venv/bin/python"
-  [[ -x "${py}" ]] || py="python3"
-  export ADL_HID="${hypothesis_id}"
-  export ADL_MSG="${message}"
-  export ADL_DATA="${data_json}"
-  "${py}" -c "
-import json, os, time
-logp = os.path.join(os.environ['ROOT_DIR'], '.cursor', 'debug-eff462.log')
-os.makedirs(os.path.dirname(logp), exist_ok=True)
-payload = {
-    'sessionId': 'eff462',
-    'timestamp': int(time.time() * 1000),
-    'location': 'launch_coev_v2_rloo_prime.sh',
-    'message': os.environ['ADL_MSG'],
-    'hypothesisId': os.environ['ADL_HID'],
-    'data': json.loads(os.environ.get('ADL_DATA') or '{}'),
-}
-with open(logp, 'a') as f:
-    f.write(json.dumps(payload) + '\n')
-" 2>/dev/null || true
-}
-# endregion
 
 if ! command -v uv >/dev/null 2>&1; then
   echo "uv not found; installing..."
@@ -137,11 +107,7 @@ wait_for_vllm_reflection_port() {
   until port_is_open "${port}"; do
     sleep 2
     waited=$((waited + 2))
-    # region agent log
     if [[ -f "${vllm_log}" ]] && grep -qE "GatedRepoError|huggingface_hub\.errors\.GatedRepoError|Cannot access gated repo|You are trying to access a gated repo" "${vllm_log}" 2>/dev/null; then
-      local _htok="false"
-      [[ -n "${HF_TOKEN:-}${HUGGINGFACE_HUB_TOKEN:-}" ]] && _htok="true"
-      _agent_debug_log "A" "vLLM log shows HF gated/auth failure" "{\"port\":${port},\"waited_s\":${waited},\"has_hf_token\":${_htok}}"
       echo "ERROR: Hugging Face rejected access to the reflection model (gated repo or invalid/missing token)."
       echo "Fix: export HF_TOKEN or HUGGINGFACE_HUB_TOKEN, run 'huggingface-cli login', and accept the model license on Hugging Face."
       echo "Model: ${REFLECTION_MODEL}"
@@ -150,7 +116,6 @@ wait_for_vllm_reflection_port() {
       return 1
     fi
     if [[ -n "${REFLECTION_VLLM_PID:-}" ]] && ! kill -0 "${REFLECTION_VLLM_PID}" 2>/dev/null; then
-      _agent_debug_log "B" "vLLM background PID no longer running before port bind" "{\"port\":${port},\"pid\":${REFLECTION_VLLM_PID:-0},\"waited_s\":${waited}}"
       echo "ERROR: ${name} process exited before binding :${port} (see log below)."
       if [[ -f "${vllm_log}" ]]; then
         echo "--- tail ${vllm_log} ---"
@@ -158,23 +123,12 @@ wait_for_vllm_reflection_port() {
       fi
       return 1
     fi
-    # endregion
     if [[ "${waited}" -ge "${timeout_s}" ]]; then
-      # region agent log
-      local po="false"
-      port_is_open "${port}" && po="true" || true
-      local alive="unknown"
-      [[ -n "${REFLECTION_VLLM_PID:-}" ]] && kill -0 "${REFLECTION_VLLM_PID}" 2>/dev/null && alive="true" || alive="false"
-      _agent_debug_log "D" "wait_for_vllm_reflection_port timeout without TCP" "{\"port\":${port},\"waited_s\":${waited},\"port_open\":${po},\"pid_alive\":${alive}}"
-      # endregion
       echo "ERROR: ${name} did not become ready on :${port} in time."
       echo "If the model is large, ensure weights are cached; if you see HF errors above, fix token/license."
       return 1
     fi
   done
-  # region agent log
-  _agent_debug_log "C" "reflection vLLM TCP port open" "{\"port\":${port},\"waited_s\":${waited}}"
-  # endregion
   echo "${name} is up on :${port}"
 }
 
