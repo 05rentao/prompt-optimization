@@ -517,7 +517,7 @@ def main() -> None:
     args.adversary_model_id = model_defaults["adversary_model_id"]
     args.task_model_name = model_defaults["target_model_name"]
     args.reflection_model_name = model_defaults["reflection_model_name"]
-    rw_url, rw_key = resolve_reflection_env_overrides(defaults)
+    rw_url, rw_key = resolve_reflection_env_overrides(defaults)  # process env overrides (where is it being overridden and is it neccesary?)
     args.reflection_vllm_base_url = rw_url
     args.reflection_vllm_api_key = rw_key
 

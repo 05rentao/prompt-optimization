@@ -9,9 +9,9 @@ global:
 runtime:
   models:
     adversary_model_id: "unsloth/Qwen2.5-7B-Instruct-bnb-4bit"
+    judge_model_id: "cais/HarmBench-Mistral-7b-val-cls"
     # Victim + GEPA reflection share this id; target inference is served via vLLM (see reflection.base_url).
     target_model_name: "meta-llama/Llama-3.1-8B-Instruct"
-    judge_model_id: "cais/HarmBench-Mistral-7b-val-cls"
     reflection_model_name: "meta-llama/Llama-3.1-8B-Instruct"
   reflection:
     base_url: "http://127.0.0.1:8001/v1"
