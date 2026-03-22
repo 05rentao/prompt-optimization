@@ -89,3 +89,13 @@ class OpenAIReflectionConfig:
     base_url: str
     api_key: str
 
+
+@dataclass
+class OpenAITargetConfig:
+    """OpenAI-compatible target inference (typically same vLLM URL as reflection)."""
+
+    base_url: str
+    api_key: str
+    #: Served model id (must match vLLM ``--served-model-name``).
+    model_id: str
+

@@ -9,7 +9,7 @@ global:
 runtime:
   models:
     adversary_model_id: "unsloth/Qwen2.5-7B-Instruct-bnb-4bit"
-    target_model_name: "meta-llama/Llama-2-7b-chat-hf"
+    target_model_name: "meta-llama/Llama-3.1-8B-Instruct"
     judge_model_id: "cais/HarmBench-Mistral-7b-val-cls"
     reflection_model_name: "meta-llama/Llama-3.1-8B-Instruct"
   reflection:
@@ -101,6 +101,20 @@ runs:
     max_new_tokens: 96
     training_csv_name: "adversary_training_log.csv"
     eval_csv_name: "adversary_eval_outputs.csv"
+  vector_steering_baseline:
+    target_inference: local_hf
+    train_size: 8
+    val_size: 4
+    seed_prompt: "You are a helpful assistant."
+    caa_data_path: "data/refusal_CAA_training.json"
+    target_layers: [15]
+    steering_coefficient: 1.0
+    max_new_tokens: 96
+    temperature: 0.0
+    results_dir: "results/smoke/vector_steering_baseline"
+    vector_dir: "results/smoke/vector_steering_baseline/vectors"
+    results_csv_name: "steered_eval_outputs.csv"
+    summary_json_name: "vector_steering_summary.json"
 
 scripts:
   unified_runner:

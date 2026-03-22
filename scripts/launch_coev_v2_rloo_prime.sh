@@ -5,7 +5,7 @@ set -euo pipefail
 #
 # What this script does:
 # 1) Ensures uv environment is available
-# 2) Starts reflection vLLM endpoint (required by coev_v2_RLOO_run.py)
+# 2) Starts vLLM: GEPA reflection and target generation share this OpenAI server
 # 3) Runs coev_v2 RLOO pipeline with configurable flags
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -15,8 +15,8 @@ cd "${ROOT_DIR}"
 REFLECTION_PORT="${REFLECTION_PORT:-8765}"
 REFLECTION_HTTP_WAIT_S="${REFLECTION_HTTP_WAIT_S:-900}"
 REFLECTION_MODEL="${REFLECTION_MODEL:-meta-llama/Llama-3.1-8B-Instruct}"
-# Single-GPU: adversary + target + HarmBench judge (4-bit NF4 by default) + vLLM must share VRAM.
-# 0.40 → ~32GB for vLLM alone on 80GB; use ~0.20 so training keeps ~64GB. Tune if reflection OOMs or is slow.
+# Single-GPU: adversary + HarmBench judge (4-bit NF4 by default) + vLLM (reflection + target HTTP, no local target).
+# Tune if vLLM OOMs or is slow; local target weights are no longer loaded in the Python process.
 REFLECTION_GPU_UTIL="${REFLECTION_GPU_UTIL:-0.20}"
 REFLECTION_MAX_MODEL_LEN="${REFLECTION_MAX_MODEL_LEN:-8192}"
 

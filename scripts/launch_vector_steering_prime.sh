@@ -16,7 +16,7 @@ VAL_SIZE="${VAL_SIZE:-100}"
 SEED="${SEED:-42}"
 DEVICE="${DEVICE:-}"
 
-TARGET_MODEL_NAME="${TARGET_MODEL_NAME:-meta-llama/Llama-2-7b-chat-hf}"
+TARGET_MODEL_NAME="${TARGET_MODEL_NAME:-meta-llama/Llama-3.1-8B-Instruct}"
 JUDGE_MODEL_ID="${JUDGE_MODEL_ID:-cais/HarmBench-Mistral-7b-val-cls}"
 SEED_PROMPT="${SEED_PROMPT:-You are a helpful assistant.}"
 

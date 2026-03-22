@@ -12,7 +12,6 @@ import unsloth
 from unsloth import FastLanguageModel
 
 import argparse
-import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -48,14 +47,14 @@ from src.runtime import (
     GenerationRequest,
     GenerationSession,
     HarmbenchJudgeConfig,
-    LocalHFConfig,
     ModelConfig,
-    OpenAIReflectionConfig,
     RuntimeCatalog,
-    TargetModelConfig,
     UnslothAdversaryConfig,
+    build_reflection_gateway_for_defaults,
+    build_vllm_target_session,
     evaluate_examples,
     resolve_hf_token,
+    resolve_reflection_env_overrides,
 )
 from src.runtime.defaults import load_default_config
 from src.runtime.openai_reflection_gateway import OpenAIReflectionGateway
@@ -105,16 +104,10 @@ def load_adversary_model(cfg: UnslothAdversaryConfig) -> GenerationSession:
     return RuntimeCatalog.build_adversary_session(cfg)
 
 
-def load_target_model(cfg: TargetModelConfig) -> GenerationSession:
-    """Construct the frozen target generation session."""
+def load_target_model(defaults: dict[str, Any]) -> GenerationSession:
+    """Construct the frozen target session (OpenAI-compatible vLLM; see ``configs/default.yaml``)."""
 
-    return RuntimeCatalog.build_target_session(
-        LocalHFConfig(
-            model_id=cfg.model_id,
-            use_4bit=True,
-            max_new_tokens=cfg.max_new_tokens,
-        )
-    )
+    return build_vllm_target_session(defaults)
 
 
 def load_harmbench_judge() -> GenerationSession:
@@ -518,19 +511,15 @@ def main() -> None:
     global_defaults = defaults["global"]
     runtime_defaults = defaults["runtime"]
     model_defaults = runtime_defaults["models"]
-    reflection_defaults = runtime_defaults["reflection"]
 
     # Keep runtime/model config centralized in YAML rather than CLI.
     args.runtime_profile = global_defaults["runtime_profile"]
     args.adversary_model_id = model_defaults["adversary_model_id"]
     args.task_model_name = model_defaults["target_model_name"]
     args.reflection_model_name = model_defaults["reflection_model_name"]
-    args.reflection_vllm_base_url = os.environ.get(
-        "REFLECTION_VLLM_BASE_URL", reflection_defaults["base_url"]
-    )
-    args.reflection_vllm_api_key = os.environ.get(
-        "REFLECTION_VLLM_API_KEY", reflection_defaults["api_key"]
-    )
+    rw_url, rw_key = resolve_reflection_env_overrides(defaults)
+    args.reflection_vllm_base_url = rw_url
+    args.reflection_vllm_api_key = rw_key
 
     # Phase 2: resolve device + evaluation config.
     run_start = time.time()
@@ -553,7 +542,6 @@ def main() -> None:
         lora_alpha=model_cfg.lora_alpha,
         lora_dropout=model_cfg.lora_dropout,
     )
-    target_cfg = TargetModelConfig(model_id=args.task_model_name, max_new_tokens=args.max_new_tokens)
     coev_cfg = CoevConfig(
         stages=args.stages,
         iters_per_stage=args.iters_per_stage,
@@ -580,17 +568,12 @@ def main() -> None:
         reflection_model_name=shared_gepa_cfg.reflection_model_name,
     )
 
-    reflection_gateway = RuntimeCatalog.build_reflection_gateway(
-        OpenAIReflectionConfig(
-            base_url=args.reflection_vllm_base_url,
-            api_key=args.reflection_vllm_api_key,
-        )
-    )
+    reflection_gateway = build_reflection_gateway_for_defaults(defaults)
     reflection_gateway.verify(args.reflection_model_name)
     print("Reflection model smoke output:", reflection_gateway.smoke_test(args.reflection_model_name))
 
     adversary_session = load_adversary_model(adversary_cfg)
-    target_session = load_target_model(target_cfg)
+    target_session = load_target_model(defaults)
     judge_session = load_harmbench_judge()
     ctx = RunContext(
         adversary_session=adversary_session,

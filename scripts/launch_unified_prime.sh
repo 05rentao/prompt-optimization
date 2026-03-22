@@ -4,11 +4,12 @@ set -euo pipefail
 export PYTHONPATH="${PYTHONPATH:-}:."
 
 # Unified launcher for a single H100-80GB Prime instance.
+# Starts one vLLM OpenAI server (REFLECTION_MODEL) used for GEPA reflection and target generation.
 # Modes:
-#   - gepa:    start reflection vLLM endpoint, then run GEPA path
-#   - coev:    run CoEV path only (no vLLM endpoints)
-#   - coev_v2: start reflection vLLM endpoint, then run CoEV v2 path
-#   - adversary: run adversary path only (no vLLM endpoints)
+#   - gepa:      GEPA prompt optimization
+#   - coev:      CoEV reinforce/gepa/eval (target via same vLLM)
+#   - coev_v2:   CoEV v2 + dual-role GEPA
+#   - adversary: adversary-only training (target via same vLLM)
 
 MODE="${MODE:-gepa}"                         # gepa | coev | coev_v2 | adversary
 
@@ -117,19 +118,12 @@ run_unified() {
   "${cmd[@]}"
 }
 
-if [[ "${MODE}" == "coev" || "${MODE}" == "adversary" ]]; then
-  echo "Running ${MODE} only (no vLLM servers)..."
-  run_unified
-  echo "Done."
-  exit 0
-fi
-
-if [[ "${MODE}" != "gepa" && "${MODE}" != "coev_v2" ]]; then
+if [[ "${MODE}" != "gepa" && "${MODE}" != "coev_v2" && "${MODE}" != "coev" && "${MODE}" != "adversary" ]]; then
   echo "Unsupported MODE=${MODE}. Expected one of: gepa, coev, coev_v2, adversary"
   exit 1
 fi
 
-echo "Starting reflection vLLM runtime for mode=${MODE}..."
+echo "Starting vLLM (shared reflection + target) for mode=${MODE}..."
 cleanup_vllm
 
 uv run python -m vllm.entrypoints.openai.api_server \
@@ -140,7 +134,11 @@ uv run python -m vllm.entrypoints.openai.api_server \
   --max-model-len "${REFLECTION_MAX_MODEL_LEN}" \
   --gpu-memory-utilization "${REFLECTION_GPU_UTIL}" \
   --enforce-eager > logs/unified_reflection_vllm.log 2>&1 &
-wait_for_port "${REFLECTION_PORT}" "reflection vLLM"
+wait_for_port "${REFLECTION_PORT}" "vLLM"
+
+export REFLECTION_VLLM_BASE_URL="http://127.0.0.1:${REFLECTION_PORT}/v1"
+export REFLECTION_VLLM_API_KEY="${REFLECTION_VLLM_API_KEY:-EMPTY}"
+echo "REFLECTION_VLLM_BASE_URL=${REFLECTION_VLLM_BASE_URL}"
 
 run_unified
 

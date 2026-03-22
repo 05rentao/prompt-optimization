@@ -7,9 +7,8 @@ This script runs an end-to-end prompt optimization cycle:
 3) Optimize the system prompt with GEPA.
 4) Re-evaluate optimized prompt and export artifacts.
 
-This version uses the same local target model initialization style as
-`runs/coev_run.py` (transformers + 4-bit quantization), while
-keeping GEPA reflection on an OpenAI-compatible endpoint.
+Target generation uses the same OpenAI-compatible vLLM server as GEPA reflection
+(see ``configs/default.yaml`` ``runtime.reflection`` and ``runtime.models``).
 """
 
 from __future__ import annotations
@@ -47,11 +46,11 @@ from src.runtime import (
     GenerationSession,
     GepaPromptOptimizationConfig,
     HarmbenchJudgeConfig,
-    LocalHFConfig,
-    OpenAIReflectionConfig,
     RuntimeCatalog,
-    TargetModelConfig,
+    build_reflection_gateway_for_defaults,
+    build_vllm_target_session,
     evaluate_examples,
+    resolve_reflection_env_overrides,
     run_gepa_prompt_optimization,
     resolve_hf_token,
 )
@@ -99,16 +98,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--root-dir", default=str(Path.cwd()))
     parser.add_argument("--results-dir", default=run_defaults["results_dir"])
     return parser.parse_args()
-
-
-def load_target_model(cfg: TargetModelConfig) -> GenerationSession:
-    """Create the local HF target-model generation session."""
-    runtime_cfg = LocalHFConfig(
-        model_id=cfg.model_id,
-        use_4bit=True,
-        max_new_tokens=cfg.max_new_tokens,
-    )
-    return RuntimeCatalog.build_target_session(runtime_cfg)
 
 
 def verify_reflection_client(reflection_gateway: OpenAIReflectionGateway, reflection_model_name: str) -> None:
@@ -336,12 +325,9 @@ def main() -> None:
     global_defaults = defaults["global"]
     runtime_defaults = defaults["runtime"]
     model_defaults = runtime_defaults["models"]
-    reflection_defaults = runtime_defaults["reflection"]
-
     target_model_name = model_defaults["target_model_name"]
     reflection_model_name = model_defaults["reflection_model_name"]
-    reflection_base_url = reflection_defaults["base_url"]
-    reflection_api_key = reflection_defaults["api_key"]
+    reflection_base_url, reflection_api_key = resolve_reflection_env_overrides(defaults)
     runtime_profile = global_defaults["runtime_profile"]
 
     # Phase 2: resolve device + evaluation config.
@@ -358,15 +344,9 @@ def main() -> None:
     sns.set_theme(style="whitegrid")
 
     # Phase 3: build long-lived runtime sessions.
-    target_cfg = TargetModelConfig(model_id=target_model_name, max_new_tokens=args.max_tokens)
-    target_session = load_target_model(target_cfg)
+    target_session = build_vllm_target_session(defaults)
     judge_session = RuntimeCatalog.build_judge_session(HarmbenchJudgeConfig()) if args.eval_method == "judge" else None
-    reflection_gateway = RuntimeCatalog.build_reflection_gateway(
-        OpenAIReflectionConfig(
-            base_url=reflection_base_url,
-            api_key=reflection_api_key,
-        )
-    )
+    reflection_gateway = build_reflection_gateway_for_defaults(defaults)
 
     # Reflection is still OpenAI-compatible vLLM.
     verify_reflection_client(reflection_gateway, reflection_model_name)

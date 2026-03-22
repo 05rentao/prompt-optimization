@@ -13,6 +13,7 @@ from openai import OpenAI
 from .config import OpenAIReflectionConfig
 from .env import scoped_env
 from .interfaces import ReflectionGateway
+from .openai_chat import openai_chat_completion
 
 
 def _response_looks_like_html(r: requests.Response) -> bool:
@@ -129,7 +130,8 @@ class OpenAIReflectionGateway(ReflectionGateway):
 
     def smoke_test(self, reflection_model_name: str) -> str:
         """Execute a short completion request to verify runtime behavior."""
-        response = self.client.chat.completions.create(
+        return openai_chat_completion(
+            self.client,
             model=reflection_model_name,
             messages=[
                 {"role": "system", "content": "You are a prompt optimizer."},
@@ -137,8 +139,8 @@ class OpenAIReflectionGateway(ReflectionGateway):
             ],
             max_tokens=32,
             temperature=0.0,
+            top_p=0.9,
         )
-        return response.choices[0].message.content or ""
 
     @contextmanager
     def bind_openai_env(self) -> Iterator[None]:

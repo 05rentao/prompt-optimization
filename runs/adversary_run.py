@@ -40,9 +40,9 @@ from src.runtime import (
     GenerationRequest,
     GenerationSession,
     HarmbenchJudgeConfig,
-    LocalHFConfig,
     RuntimeCatalog,
     UnslothAdversaryConfig,
+    build_vllm_target_session,
     evaluate_outputs,
     resolve_hf_token,
 )
@@ -105,15 +105,9 @@ def load_adversary_model(model_id: str) -> GenerationSession:
     return RuntimeCatalog.build_adversary_session(UnslothAdversaryConfig(model_id=model_id))
 
 
-def load_target_model(model_id: str, max_new_tokens: int) -> GenerationSession:
-    """Build the frozen target generation session."""
-    return RuntimeCatalog.build_target_session(
-        LocalHFConfig(
-            model_id=model_id,
-            use_4bit=True,
-            max_new_tokens=max_new_tokens,
-        )
-    )
+def load_target_model(defaults: dict[str, Any]) -> GenerationSession:
+    """Build the frozen target session (OpenAI-compatible vLLM; see ``configs/default.yaml``)."""
+    return build_vllm_target_session(defaults)
 
 
 def load_harmbench_judge() -> GenerationSession:
@@ -322,7 +316,7 @@ def main() -> None:
 
     # Phase 3: build long-lived runtime sessions.
     adversary_session = load_adversary_model(model_defaults["adversary_model_id"])
-    target_session = load_target_model(model_defaults["target_model_name"], max_new_tokens=train_cfg.max_new_tokens)
+    target_session = load_target_model(defaults)
     judge_session = load_harmbench_judge()
     ctx = RunContext(
         adversary_session=adversary_session,

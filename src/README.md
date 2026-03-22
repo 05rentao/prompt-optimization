@@ -85,16 +85,16 @@ uv run runs/adversary_run.py --mode train
 ```python
 from src.runtime import (
     RuntimeCatalog,
-    LocalHFConfig,
     UnslothAdversaryConfig,
     HarmbenchJudgeConfig,
     OpenAIReflectionConfig,
     GenerationRequest,
+    build_vllm_target_session,
+    load_default_config,
 )
 
-target_session = RuntimeCatalog.build_target_session(
-    LocalHFConfig(model_id="meta-llama/Llama-2-7b-chat-hf")
-)
+defaults = load_default_config()
+target_session = build_vllm_target_session(defaults)
 adversary_session = RuntimeCatalog.build_adversary_session(
     UnslothAdversaryConfig(model_id="unsloth/Qwen2.5-7B-Instruct-bnb-4bit")
 )
@@ -136,9 +136,9 @@ from src.data import load_harmbench_subset
 from src.runtime import (
     EvaluationConfig,
     HarmbenchJudgeConfig,
-    LocalHFConfig,
     RuntimeCatalog,
-    TargetModelConfig,
+    build_vllm_target_session,
+    load_default_config,
     resolve_hf_token,
 )
 from src.types import RunManifest
@@ -160,10 +160,8 @@ def main() -> None:
     args = parse_args()
     token = resolve_hf_token()
 
-    target_cfg = TargetModelConfig(model_id="meta-llama/Llama-2-7b-chat-hf")
-    target_session = RuntimeCatalog.build_target_session(
-        LocalHFConfig(model_id=target_cfg.model_id, use_4bit=True, max_new_tokens=target_cfg.max_new_tokens)
-    )
+    defaults = load_default_config()
+    target_session = build_vllm_target_session(defaults)
     judge_session = RuntimeCatalog.build_judge_session(HarmbenchJudgeConfig())
     eval_cfg = EvaluationConfig(method="judge")
 

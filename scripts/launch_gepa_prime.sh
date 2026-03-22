@@ -5,14 +5,13 @@ set -euo pipefail
 #
 # What this script does:
 # 1) Ensures uv environment is available
-# 2) Starts reflection vLLM endpoint (required by runs/gepa_run.py)
-# 3) Optionally starts a task vLLM endpoint for parity/testing
+# 2) Starts one vLLM OpenAI server: GEPA reflection and target generation both use it
+# 3) Optionally starts a second vLLM on TASK_PORT (START_TASK_VLLM=1) for experiments only
 # 4) Runs runs/gepa_run.py with configurable experiment flags
 #
 # Important:
-# - runs/gepa_run.py reads reflection base URL/model from configs/default.yaml.
-# - By default that file expects http://127.0.0.1:8001/v1.
-# - This launcher defaults REFLECTION_PORT=8001 to match.
+# - Target uses the same vLLM as reflection (HTTP); configs/default.yaml runtime.models must match REFLECTION_MODEL.
+# - This launcher sets REFLECTION_VLLM_BASE_URL to match REFLECTION_PORT (default 8001).
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
@@ -29,8 +28,7 @@ REFLECTION_GPU_UTIL="${REFLECTION_GPU_UTIL:-0.35}"
 TASK_MAX_MODEL_LEN="${TASK_MAX_MODEL_LEN:-4096}"
 REFLECTION_MAX_MODEL_LEN="${REFLECTION_MAX_MODEL_LEN:-8192}"
 
-# runs/gepa_run.py does local target generation by default.
-# Starting task vLLM is optional and OFF by default to avoid GPU contention.
+# Second vLLM on TASK_PORT is optional (legacy / A/B); normal runs use a single server.
 START_TASK_VLLM="${START_TASK_VLLM:-0}"
 
 DATASET_NAME="${DATASET_NAME:-walledai/HarmBench}"
@@ -140,6 +138,10 @@ uv run python -m vllm.entrypoints.openai.api_server \
   --enforce-eager > logs/gepa_prime_reflection_vllm.log 2>&1 &
 REFLECTION_VLLM_PID=$!
 wait_for_port "${REFLECTION_PORT}" "reflection vLLM" 240
+
+export REFLECTION_VLLM_BASE_URL="http://127.0.0.1:${REFLECTION_PORT}/v1"
+export REFLECTION_VLLM_API_KEY="${REFLECTION_VLLM_API_KEY:-EMPTY}"
+echo "REFLECTION_VLLM_BASE_URL=${REFLECTION_VLLM_BASE_URL}"
 
 echo "Launching runs/gepa_run.py..."
 RUN_CMD=(

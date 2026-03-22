@@ -6,6 +6,9 @@ This module keeps the original workflow while removing notebook artifacts:
 - explicit setup functions
 - corrected evaluation/judging contracts
 - optional REINFORCE and GEPA staged training modes
+
+Target generation uses the OpenAI-compatible vLLM endpoint from ``configs/default.yaml``
+(``runtime.reflection``); start vLLM before running or use ``scripts/launch_unified_prime.sh``.
 """
 
 from __future__ import annotations
@@ -38,9 +41,9 @@ from src.runtime import (
     GenerationRequest,
     GenerationSession,
     HarmbenchJudgeConfig,
-    LocalHFConfig,
     RuntimeCatalog,
     UnslothAdversaryConfig,
+    build_vllm_target_session,
     evaluate_outputs,
     resolve_hf_token,
 )
@@ -74,7 +77,7 @@ class ModelConfig:
 
 @dataclass
 class TargetModelConfig:
-    model_id: str = "meta-llama/Llama-2-7b-chat-hf"
+    model_id: str = "meta-llama/Llama-3.1-8B-Instruct"
     max_new_tokens: int = 150
 
 
@@ -175,15 +178,9 @@ def load_adversary_model(cfg: ModelConfig) -> GenerationSession:
     )
 
 
-def load_target_model(cfg: TargetModelConfig) -> GenerationSession:
-    """Build the frozen target session used for defended generation."""
-    return RuntimeCatalog.build_target_session(
-        LocalHFConfig(
-            model_id=cfg.model_id,
-            use_4bit=True,
-            max_new_tokens=cfg.max_new_tokens,
-        )
-    )
+def load_target_model(defaults: dict[str, Any]) -> GenerationSession:
+    """Build the frozen target session (OpenAI-compatible vLLM; see ``configs/default.yaml``)."""
+    return build_vllm_target_session(defaults)
 
 
 def load_harmbench_judge() -> GenerationSession:
@@ -620,7 +617,7 @@ def main() -> None:
     gepa_cfg = GepaConfig(**run_defaults["gepa"])
 
     adversary_session = load_adversary_model(adversary_cfg)
-    target_session = load_target_model(target_cfg)
+    target_session = load_target_model(defaults)
     judge_session = load_harmbench_judge()
     ctx = RunContext(
         adversary_session=adversary_session,

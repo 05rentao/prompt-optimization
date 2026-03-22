@@ -198,7 +198,7 @@ python3 - <<'PY'
 from huggingface_hub import model_info
 models = [
     "unsloth/Qwen2.5-1.5B-Instruct",
-    "meta-llama/Llama-2-7b-chat-hf",
+    "meta-llama/Llama-3.1-8B-Instruct",
     "cais/HarmBench-Mistral-7b-val-cls",
 ]
 for m in models:
@@ -237,17 +237,18 @@ Legend:
 | `global.device` | Easy swap | `cuda`, `cpu`, or `null` for auto | Passed into runtime device resolution. |
 | `global.runtime_profile` | Partial/in progress | label string (for manifests/reporting) | Currently metadata/profile label, not a backend selector. |
 | `runtime.models.adversary_model_id` | Easy swap (within current backend) | Unsloth/HF model id or local path compatible with current Unsloth loader | Used by `coev`, `coev_v2`, and `adversary` runs. |
-| `runtime.models.target_model_name` | Easy swap (within current backend) | HF model id or local path compatible with `transformers` local target runtime | Used by all active runs. |
-| `runtime.models.reflection_model_name` | Easy swap | model id served by reflection OpenAI-compatible endpoint | Used by GEPA and CoEV v2 paths. |
+| `runtime.models.target_model_name` | Easy swap | Must match the model served at `runtime.reflection` for HTTP target runs | Same id as `reflection_model_name` by default; victim completions go through vLLM except vector steering. |
+| `runtime.models.reflection_model_name` | Easy swap | model id served by the OpenAI-compatible endpoint (`--served-model-name`) | GEPA reflection, CoEV v2, and **target** HTTP generation (shared server). |
 | `runtime.models.judge_model_id` | Partial/in progress | Intended: HarmBench judge model id | Documented in config, but current judge construction still uses runtime defaults in scripts. |
-| `runtime.reflection.base_url` | Easy swap | OpenAI-compatible endpoint URL | Used by GEPA and CoEV v2 reflection gateway. |
-| `runtime.reflection.api_key` | Easy swap | endpoint auth token (or `EMPTY` for local vLLM setups) | Used by GEPA and CoEV v2 reflection gateway. |
+| `runtime.reflection.base_url` | Easy swap | OpenAI-compatible endpoint URL | Reflection gateway **and** HTTP target (`build_vllm_target_session`); override with `REFLECTION_VLLM_BASE_URL`. |
+| `runtime.reflection.api_key` | Easy swap | endpoint auth token (or `EMPTY` for local vLLM setups) | Same as above; override with `REFLECTION_VLLM_API_KEY`. |
 | `runtime.legacy_target_vllm.base_url` | Deprecated/legacy | N/A in current active runs | Kept for legacy compatibility docs; not wired in current pipelines. |
 | `runtime.legacy_target_vllm.api_key` | Deprecated/legacy | N/A in current active runs | Kept for legacy compatibility docs; not wired in current pipelines. |
 | `runs.gepa.*` | Easy swap | GEPA train/val size, budget, thresholds, prompt, result path | Active and wired in `runs/gepa_run.py`. |
 | `runs.coev.*` | Easy swap | CoEV modes, schedules, eval settings, prompt seeds, csv paths | Active and wired in `runs/coev_run.py`. |
 | `runs.coev_v2.*` | Easy swap | CoEV v2 schedules, GEPA budgets, token limits, prompt seeds, output names | Active and wired in `runs/coev_v2_run.py`. |
 | `runs.adversary.*` | Easy swap | adversary training schedule, eval settings, instruction/prompt, output names | Active and wired in `runs/adversary_run.py`. |
+| `runs.vector_steering_baseline.target_inference` | Easy swap | `local_hf` (required for steering) | Only `vector_steering_baseline` loads target weights locally; value must stay `local_hf`. |
 | `scripts.unified_runner.gepa_results_dir` | Easy swap | default GEPA output root | Used by unified runner defaults. |
 | `scripts.unified_runner.coev_results_dir` | Easy swap | default CoEV output root | Used by unified runner defaults. |
 | `scripts.unified_runner.adversary_results_dir` | Easy swap | default adversary output root | Used by unified runner defaults. |
@@ -255,9 +256,9 @@ Legend:
 
 ### 7.2 Practical interpretation
 
-- Current model/backend modularity is "model-id swappable" for the existing backend choices (local HF target, Unsloth adversary, OpenAI-compatible reflection).
-- It is not yet "backend swappable by config only" (for example no config-only switch from local HF target to a target vLLM backend).
-- Keys in `runtime.legacy_target_vllm.*` and `scripts.unified_runner.runtime_profile` should be treated as legacy placeholders unless/until backend-profile switching is implemented.
+- Target inference for most runs is **HTTP** to the same vLLM process as GEPA reflection (`OpenAIChatTargetRuntime`). Launch scripts set `REFLECTION_VLLM_BASE_URL` to point Python at the server.
+- **Vector steering** is the exception: it requires local weights and uses `runs.vector_steering_baseline.target_inference: local_hf`.
+- Keys in `runtime.legacy_target_vllm.*` and `scripts.unified_runner.runtime_profile` remain legacy placeholders for older docs/workflows.
 
 ### `global`
 
@@ -271,7 +272,7 @@ Legend:
 ### `runtime.models`
 
 - `adversary_model_id`: trainable adversary model for CoEV/adversary runs.
-- `target_model_name`: primary target model for response generation.
+- `target_model_name`: victim model id (must match the served vLLM model id for HTTP target runs; same as `reflection_model_name` in defaults).
 - `judge_model_id`: HarmBench classifier model for judge-based ASR scoring.
 - `reflection_model_name`: model used by reflection/GEPA prompt optimization.
 
@@ -282,8 +283,11 @@ Legend:
 
 ### `runtime.legacy_target_vllm`
 
-- Legacy compatibility block for target vLLM endpoint settings.
-- Not the primary path for current local target runtime in `runs/gepa_run.py`.
+- Legacy compatibility block; active pipelines use `runtime.reflection` for the shared vLLM URL.
+
+### `runs.vector_steering_baseline`
+
+- `target_inference`: must be `local_hf` so the script can read model weights for steering vectors.
 
 ### `runs.gepa`
 

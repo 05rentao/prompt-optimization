@@ -2,7 +2,7 @@
 
 This document describes a **planned** architectural change: serve **defender / target** completions via the **same OpenAI-compatible vLLM endpoint** already used for **GEPA reflection**, instead of loading a **second** full model with `LocalHFChatRuntime` in the training process.
 
-**Status:** planning only — **no implementation** in the PR that added this file. Use this doc when prompting a coding agent to implement the feature.
+**Status:** **implemented** in the main codebase: target generation for GEPA/CoEV/adversary runs uses the same OpenAI-compatible vLLM endpoint as reflection (`build_vllm_target_session` in `src/runtime/target_factory.py`). The **exception** is `runs/vector_steering_baseline.py`, which keeps local HF weights (`runs.vector_steering_baseline.target_inference: local_hf`). This file remains useful background on motivations and experiment semantics.
 
 ---
 

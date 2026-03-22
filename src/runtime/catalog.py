@@ -5,11 +5,12 @@ from __future__ import annotations
 import os
 from dataclasses import replace
 
-from .config import HarmbenchJudgeConfig, LocalHFConfig, OpenAIReflectionConfig, UnslothAdversaryConfig
+from .config import HarmbenchJudgeConfig, LocalHFConfig, OpenAIReflectionConfig, OpenAITargetConfig, UnslothAdversaryConfig
 from .harmbench_judge_runtime import HarmbenchJudgeRuntime
 from .interfaces import GenerationSession
 from .local_hf_runtime import LocalHFChatRuntime
 from .openai_reflection_gateway import OpenAIReflectionGateway
+from .openai_target_runtime import OpenAIChatTargetRuntime
 from .unsloth_adversary_runtime import UnslothAdversaryRuntime
 
 
@@ -20,6 +21,11 @@ class RuntimeCatalog:
     def build_target_session(cfg: LocalHFConfig) -> GenerationSession:
         """Create a target-model generation session."""
         return GenerationSession(runtime=LocalHFChatRuntime(cfg))
+
+    @staticmethod
+    def build_openai_target_session(cfg: OpenAITargetConfig) -> GenerationSession:
+        """Create a target session backed by an OpenAI-compatible HTTP endpoint (e.g. vLLM)."""
+        return GenerationSession(runtime=OpenAIChatTargetRuntime(cfg))
 
     @staticmethod
     def build_adversary_session(cfg: UnslothAdversaryConfig) -> GenerationSession:

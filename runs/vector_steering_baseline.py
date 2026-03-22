@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 """Activation-addition vector steering baseline run.
 
-This runner mirrors project conventions used by other scripts in `runs/`:
-- shared defaults via `src.runtime.defaults.load_default_config`
-- shared dataset loading via `src.data.load_harmbench_subset`
-- shared runtime sessions via `src.runtime.RuntimeCatalog`
-- artifact persistence + run manifest via `src.artifacts`
+Unlike other `runs/` entrypoints, this script **loads the target model locally**
+(see `runs.vector_steering_baseline.target_inference: local_hf` in config) so it
+can access weights for steering. All other runners use HTTP target inference via vLLM.
 """
 
 from __future__ import annotations
@@ -30,9 +28,9 @@ from src.runtime import (
     GenerationRequest,
     GenerationSession,
     HarmbenchJudgeConfig,
-    LocalHFConfig,
     RuntimeCatalog,
     TargetModelConfig,
+    build_local_hf_target_session,
     resolve_hf_token,
 )
 from src.runtime.defaults import load_default_config
@@ -82,13 +80,8 @@ def parse_args() -> argparse.Namespace:
 
 
 def load_target_model(cfg: TargetModelConfig) -> GenerationSession:
-    """Create the local HF target-model generation session."""
-    runtime_cfg = LocalHFConfig(
-        model_id=cfg.model_id,
-        use_4bit=True,
-        max_new_tokens=cfg.max_new_tokens,
-    )
-    return RuntimeCatalog.build_target_session(runtime_cfg)
+    """Create the local HF target-model generation session (requires weights for steering)."""
+    return build_local_hf_target_session(cfg)
 
 
 def _extract_question_stem(question: str) -> str:
@@ -276,6 +269,12 @@ def main() -> None:
     run_start = time.time()
     args = parse_args()
     defaults = load_default_config()
+    steering_run = defaults["runs"]["vector_steering_baseline"]
+    if steering_run.get("target_inference", "local_hf") != "local_hf":
+        raise ValueError(
+            "runs.vector_steering_baseline.target_inference must be 'local_hf' "
+            "(this script requires local model weights for steering)."
+        )
     runtime_profile = defaults["global"]["runtime_profile"]
 
     random.seed(args.seed)

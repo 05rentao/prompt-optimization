@@ -9,7 +9,8 @@ global:
 runtime:
   models:
     adversary_model_id: "unsloth/Qwen2.5-7B-Instruct-bnb-4bit"
-    target_model_name: "meta-llama/Llama-2-7b-chat-hf"
+    # Victim + GEPA reflection share this id; target inference is served via vLLM (see reflection.base_url).
+    target_model_name: "meta-llama/Llama-3.1-8B-Instruct"
     judge_model_id: "cais/HarmBench-Mistral-7b-val-cls"
     reflection_model_name: "meta-llama/Llama-3.1-8B-Instruct"
   reflection:
@@ -102,6 +103,8 @@ runs:
     training_csv_name: "adversary_training_log.csv"
     eval_csv_name: "adversary_eval_outputs.csv"
   vector_steering_baseline:
+    # Only this run loads target weights locally (activation steering); all other runs use vLLM for target.
+    target_inference: local_hf
     train_size: 100
     val_size: 100
     seed_prompt: "You are a helpful assistant."

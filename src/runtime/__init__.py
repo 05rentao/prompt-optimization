@@ -8,10 +8,17 @@ from .config import (
     LocalHFConfig,
     ModelConfig,
     OpenAIReflectionConfig,
+    OpenAITargetConfig,
     TargetModelConfig,
     UnslothAdversaryConfig,
 )
 from .defaults import load_default_config
+from .target_factory import (
+    build_local_hf_target_session,
+    build_reflection_gateway_for_defaults,
+    build_vllm_target_session,
+    resolve_reflection_env_overrides,
+)
 from .env import resolve_hf_token, scoped_env
 from .evaluation import EvaluationBatchResult, EvaluationConfig, EvaluatedSample, EvaluationResult, evaluate_examples, evaluate_outputs
 from .gepa_prompt_optimization import (
@@ -36,6 +43,7 @@ __all__ = [
     "GepaOptimizationConfig",
     "LoRABridge",
     "OpenAIReflectionConfig",
+    "OpenAITargetConfig",
     "ReflectionGateway",
     "RuntimeCatalog",
     "TargetRuntime",
@@ -53,6 +61,10 @@ __all__ = [
     "run_gepa_prompt_optimization",
     "run_dual_role_gepa_prompt_optimization",
     "load_default_config",
+    "build_vllm_target_session",
+    "build_local_hf_target_session",
+    "build_reflection_gateway_for_defaults",
+    "resolve_reflection_env_overrides",
     "resolve_hf_token",
     "scoped_env",
 ]
