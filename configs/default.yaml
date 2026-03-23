@@ -121,6 +121,14 @@ runs:
 scripts:
   unified_runner:
     runtime_profile: "dual_vllm"
+    # Orchestration for scripts/run_unified_experiment.py (only --mode is CLI).
+    run_kind: train # train | eval — eval forces coev / coev_v2 / adversary sub-modes to eval
+    coev_mode: reinforce # reinforce | gepa | eval
+    coev_v2_mode: coev # coev | eval — omit or null to infer from coev_mode
+    adversary_mode: train # train | eval
+    gepa_show_progress: true
+    save_dir: null # optional: --save-dir for adapter checkpoints (coev / coev_v2 / adversary)
     gepa_results_dir: "results/gepa"
     coev_results_dir: "results/coev"
+    coev_v2_results_dir: "results/coev_v2"
     adversary_results_dir: "results/adversary"

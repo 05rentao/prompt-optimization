@@ -83,14 +83,16 @@ Use `scripts/run_unified_experiment.py` when you want one consistent CLI.
 uv run python scripts/run_unified_experiment.py --mode gepa
 
 # CoEV legacy
-uv run python scripts/run_unified_experiment.py --mode coev --coev-mode reinforce
+uv run python scripts/run_unified_experiment.py --mode coev
 
 # CoEV v2
-uv run python scripts/run_unified_experiment.py --mode coev_v2 --coev-v2-mode coev
+uv run python scripts/run_unified_experiment.py --mode coev_v2
 
 # Adversary-only
-uv run python scripts/run_unified_experiment.py --mode adversary --adversary-mode train
+uv run python scripts/run_unified_experiment.py --mode adversary
 ```
+
+Edit `scripts.unified_runner` in `configs/default.yaml` for `coev_mode`, `coev_v2_mode`, `adversary_mode`, `run_kind`, output dirs, etc.
 
 ### Option B: Prime/cluster launcher (recommended on Prime Intellect-style servers)
 
@@ -100,21 +102,17 @@ Use `scripts/launch_unified_prime.sh` for setup + run in one command.
 # GEPA (starts reflection vLLM, then runs GEPA)
 MODE=gepa bash scripts/launch_unified_prime.sh
 
-# CoEV (runs directly, no vLLM startup path)
-MODE=coev COEV_MODE=reinforce bash scripts/launch_unified_prime.sh
+# CoEV
+MODE=coev bash scripts/launch_unified_prime.sh
 
 # CoEV v2 (starts reflection vLLM)
-MODE=coev_v2 COEV_V2_MODE=coev bash scripts/launch_unified_prime.sh
+MODE=coev_v2 bash scripts/launch_unified_prime.sh
 
-# Adversary-only (runs directly)
-MODE=adversary ADVERSARY_MODE=train bash scripts/launch_unified_prime.sh
+# Adversary-only
+MODE=adversary bash scripts/launch_unified_prime.sh
 ```
 
-Useful launcher overrides:
-
-- `TRAIN_SIZE`, `VAL_SIZE`, `MAX_METRIC_CALLS`, `MAX_TOKENS`
-- `EVAL_METHOD`, `REFUSAL_THRESHOLD`, `ASR_THRESHOLD`
-- `GEPA_RESULTS_DIR`, `COEV_RESULTS_DIR`
+Experiment settings (dataset sizes, budgets, sub-modes, result paths) live in `configs/default.yaml` or `PROMPT_OPT_CONFIG_PATH` — see `scripts.unified_runner` and `runs.*`.
 
 Notes for Prime usage:
 
@@ -249,9 +247,16 @@ Legend:
 | `runs.coev_v2.*` | Easy swap | CoEV v2 schedules, GEPA budgets, token limits, prompt seeds, output names | Active and wired in `runs/coev_v2_run.py`. |
 | `runs.adversary.*` | Easy swap | adversary training schedule, eval settings, instruction/prompt, output names | Active and wired in `runs/adversary_run.py`. |
 | `runs.vector_steering_baseline.target_inference` | Easy swap | `local_hf` (required for steering) | Only `vector_steering_baseline` loads target weights locally; value must stay `local_hf`. |
-| `scripts.unified_runner.gepa_results_dir` | Easy swap | default GEPA output root | Used by unified runner defaults. |
-| `scripts.unified_runner.coev_results_dir` | Easy swap | default CoEV output root | Used by unified runner defaults. |
-| `scripts.unified_runner.adversary_results_dir` | Easy swap | default adversary output root | Used by unified runner defaults. |
+| `scripts.unified_runner.run_kind` | Easy swap | `train` or `eval` — `eval` forces coev / coev_v2 / adversary pipeline modes to eval | Read by `scripts/run_unified_experiment.py`. |
+| `scripts.unified_runner.coev_mode` | Easy swap | `reinforce`, `gepa`, or `eval` (CoEV legacy) | Same. |
+| `scripts.unified_runner.coev_v2_mode` | Easy swap | `coev` or `eval`; omit/`null` to infer from `coev_mode` | Same. |
+| `scripts.unified_runner.adversary_mode` | Easy swap | `train` or `eval` | Same. |
+| `scripts.unified_runner.gepa_show_progress` | Easy swap | progress bar for GEPA | Same. |
+| `scripts.unified_runner.save_dir` | Optional | adapter checkpoint root (passed as `--save-dir` when set) | Same. |
+| `scripts.unified_runner.gepa_results_dir` | Easy swap | default GEPA output root | Used by unified runner. |
+| `scripts.unified_runner.coev_results_dir` | Easy swap | default CoEV output root | Used by unified runner. |
+| `scripts.unified_runner.coev_v2_results_dir` | Easy swap | CoEV v2 output root | Used by unified runner. |
+| `scripts.unified_runner.adversary_results_dir` | Easy swap | default adversary output root | Used by unified runner. |
 | `scripts.unified_runner.runtime_profile` | Deprecated/legacy | N/A in current launcher logic | Present in config/docs but not used by `scripts/run_unified_experiment.py`. |
 
 ### 7.2 Practical interpretation
@@ -333,8 +338,10 @@ Legend:
 
 ### `scripts.unified_runner`
 
-- `runtime_profile`: label for script profile metadata.
-- `gepa_results_dir`, `coev_results_dir`, `adversary_results_dir`: default output roots used by unified runner/launcher.
+- `run_kind`, `coev_mode`, `coev_v2_mode`, `adversary_mode`: orchestration for `scripts/run_unified_experiment.py` (CLI is only `--mode`).
+- `gepa_show_progress`, `save_dir` (optional).
+- `gepa_results_dir`, `coev_results_dir`, `coev_v2_results_dir`, `adversary_results_dir`: output roots for the unified runner.
+- `runtime_profile`: label for script profile metadata (legacy / docs).
 
 ## 8) Common artifacts and why they matter
 
@@ -446,11 +453,11 @@ Main modularity components:
 # Install dependencies
 uv sync
 
-# Unified runner
+# Unified runner (edit scripts.unified_runner for sub-modes and paths)
 uv run python scripts/run_unified_experiment.py --mode gepa
-uv run python scripts/run_unified_experiment.py --mode coev --coev-mode reinforce
-uv run python scripts/run_unified_experiment.py --mode coev_v2 --coev-v2-mode coev
-uv run python scripts/run_unified_experiment.py --mode adversary --adversary-mode train
+uv run python scripts/run_unified_experiment.py --mode coev
+uv run python scripts/run_unified_experiment.py --mode coev_v2
+uv run python scripts/run_unified_experiment.py --mode adversary
 
 # Prime launcher
 MODE=gepa bash scripts/launch_unified_prime.sh

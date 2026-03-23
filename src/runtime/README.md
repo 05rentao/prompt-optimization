@@ -83,8 +83,8 @@ uv run runs/coev_v2_run.py --mode eval
 
 ```bash
 uv run scripts/run_unified_experiment.py --mode gepa
-uv run scripts/run_unified_experiment.py --mode coev --coev-mode reinforce
-uv run scripts/run_unified_experiment.py --mode coev_v2 --coev-v2-mode coev
+uv run scripts/run_unified_experiment.py --mode coev
+uv run scripts/run_unified_experiment.py --mode coev_v2
 ```
 
 ## Logic check summary (current)

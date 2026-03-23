@@ -181,26 +181,28 @@ This repo now uses the unified launcher and run scripts in `scripts/` and `runs/
 
 ```bash
 # Main pipeline (CoEV v2)
-MODE=coev_v2 COEV_V2_MODE=coev bash scripts/launch_unified_prime.sh
+MODE=coev_v2 bash scripts/launch_unified_prime.sh
 
 # GEPA-only
 MODE=gepa bash scripts/launch_unified_prime.sh
 
 # CoEV legacy
-MODE=coev COEV_MODE=reinforce bash scripts/launch_unified_prime.sh
+MODE=coev bash scripts/launch_unified_prime.sh
 
 # Adversary-only
-MODE=adversary ADVERSARY_MODE=train bash scripts/launch_unified_prime.sh
+MODE=adversary bash scripts/launch_unified_prime.sh
 ```
+
+Edit `configs/default.yaml` (or `PROMPT_OPT_CONFIG_PATH`) for sub-modes, budgets, and paths — see `scripts.unified_runner` and `runs.*`.
 
 ### 7) Typical runtime expectations on one H100 (rough guidance)
 
-These are ballpark estimates and vary by model load time, dataset size, and `MAX_METRIC_CALLS`:
+These are ballpark estimates and vary by model load time, dataset size, and `runs.gepa.max_metric_calls` / CoEV settings in YAML:
 
-- `MODE=adversary` (`TRAIN_SIZE=100`, `VAL_SIZE=100`): often around 20-60 minutes.
-- `MODE=coev` (`COEV_MODE=reinforce`): often around 30-90 minutes.
-- `MODE=gepa` (`MAX_METRIC_CALLS=300`): often around 1-3+ hours.
-- `MODE=coev_v2` (`COEV_V2_MODE=coev`, GEPA enabled): often around 1.5-4+ hours.
+- `MODE=adversary` (default train sizes in config): often around 20-60 minutes.
+- `MODE=coev`: often around 30-90 minutes.
+- `MODE=gepa`: often around 1-3+ hours.
+- `MODE=coev_v2` (GEPA stages enabled): often around 1.5-4+ hours.
 
 If you want quick validation first, use smoke mode:
 

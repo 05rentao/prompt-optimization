@@ -65,13 +65,13 @@ uv run runs/adversary_run.py --help
 
 ### 5) Best way to run scripts
 
-Use `configs/default.yaml` as the source of truth for stable runtime values (model IDs, reflection endpoint, runtime profile). Override only experiment controls on CLI.
+Use `configs/default.yaml` as the source of truth (model IDs, reflection endpoint, experiment budgets, and `scripts.unified_runner` for the unified wrapper). The unified CLI is only `--mode`.
 
 ```bash
 # Recommended: use the unified wrapper (details in docs/getting-started.md).
 uv run scripts/run_unified_experiment.py --mode gepa
-uv run scripts/run_unified_experiment.py --mode coev --coev-mode reinforce
-uv run scripts/run_unified_experiment.py --mode coev_v2 --coev-v2-mode coev
+uv run scripts/run_unified_experiment.py --mode coev
+uv run scripts/run_unified_experiment.py --mode coev_v2
 
 # Direct script runs (when developing one pipeline):
 uv run runs/gepa_run.py --show-progress
