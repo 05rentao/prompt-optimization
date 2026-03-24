@@ -25,6 +25,8 @@ class RunManifest:
     budget: dict[str, Any]
     endpoints: dict[str, Any] = field(default_factory=dict)
     extra: dict[str, Any] = field(default_factory=dict)
+    #: CLI args, config file path, reflection URL, and env flags (see ``build_config_snapshot``).
+    config_snapshot: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

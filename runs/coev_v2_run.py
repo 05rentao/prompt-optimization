@@ -28,6 +28,7 @@ from src.artifacts import (
     log_saved_artifacts,
     save_baseline_optimized_plot,
     save_coev_asr_vs_global_step_plot,
+    save_coev_refusal_vs_global_step_plot,
     save_trajectory_plot,
     write_json,
     write_many_csv,
@@ -61,7 +62,7 @@ from src.runtime import (
     resolve_reflection_env_overrides,
     timed_target_generate,
 )
-from src.runtime.defaults import load_default_config
+from src.runtime.defaults import build_config_snapshot, load_default_config
 from src.runtime.openai_reflection_gateway import OpenAIReflectionGateway
 from src.runtime.gepa_prompt_optimization import (
     DualRoleGepaContext,
@@ -337,8 +338,8 @@ def _eval_suite(
     )
 
 
-def _try_save_adapters_print(ctx: RunContext, save_dir: str | None) -> None:
-    path = maybe_save_adapters_common(ctx.adversary_session, save_dir)
+def _try_save_adapters_print(ctx: RunContext, save_dir: str | None, results_dir: Path) -> None:
+    path = maybe_save_adapters_common(ctx.adversary_session, save_dir, results_dir=results_dir)
     if path:
         print(f"Saved model/tokenizer to: {path}")
 
@@ -360,6 +361,7 @@ def save_artifacts(
     *,
     gepa_final_attacker_val_score: float | None = None,
     gepa_final_defender_val_score: float | None = None,
+    config_snapshot: dict[str, Any],
 ) -> None:
     """Write all CoEV v2 artifacts, plots, and run manifest."""
 
@@ -441,6 +443,12 @@ def save_artifacts(
         out_path=results_dir / "plot_asr_vs_iterations.png",
         title="CoEV v2 ASR vs global training step (stage checkpoints)",
     )
+    refusal_iter_path = save_coev_refusal_vs_global_step_plot(
+        stage_metrics_df=stage_metrics_df,
+        iters_per_stage=args.iters_per_stage,
+        out_path=results_dir / "plot_refusal_vs_iterations.png",
+        title="CoEV v2 refusal rate vs global training step (stage checkpoints)",
+    )
 
     manifest = RunManifest(
         mode="coev_v2",
@@ -476,6 +484,7 @@ def save_artifacts(
             "training_csv_name": args.training_csv_name,
             "eval_method": args.eval_method,
         },
+        config_snapshot=config_snapshot,
     )
     manifest_path = write_run_manifest(results_dir=results_dir, payload=manifest)
     logged_paths = [
@@ -490,6 +499,8 @@ def save_artifacts(
         logged_paths.append(trajectory_plot_path)
     if asr_iter_path is not None:
         logged_paths.append(asr_iter_path)
+    if refusal_iter_path is not None:
+        logged_paths.append(refusal_iter_path)
     logged_paths.append(results_dir)
     log_saved_artifacts(logged_paths)
 
@@ -502,7 +513,11 @@ def parse_args(defaults: dict[str, Any]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run CoEV v2 (REINFORCE + GEPA prompt evolution).")
     parser.add_argument("--mode", choices=["coev", "eval"], default="coev")
     parser.add_argument("--device", default=global_defaults["device"])
-    parser.add_argument("--save-dir", default=None)
+    parser.add_argument(
+        "--save-dir",
+        default=None,
+        help="Optional directory for adversary adapters; relative paths are under --results-dir.",
+    )
     parser.add_argument("--results-dir", default=run_defaults["results_dir"])
     parser.add_argument("--training-csv-name", default=run_defaults["training_csv_name"])
 
@@ -620,12 +635,14 @@ def _run_eval_only(
     attacker_instruction: str,
     defense_prompt: str,
     run_start: float,
+    config_snapshot: dict[str, Any],
 ) -> None:
-    _try_save_adapters_print(ctx, args.save_dir)
+    results_dir = Path(args.results_dir).resolve()
+    _try_save_adapters_print(ctx, args.save_dir, results_dir)
     t_log, t_a, t_d, t_s = (pd.DataFrame() for _ in range(4))
     save_artifacts(
         args=args,
-        results_dir=Path(args.results_dir).resolve(),
+        results_dir=results_dir,
         baseline_metrics=baseline_metrics,
         optimized_metrics=baseline_metrics,
         baseline_df=baseline_df,
@@ -637,6 +654,7 @@ def _run_eval_only(
         final_attacker_instruction=attacker_instruction,
         final_defense_prompt=defense_prompt,
         run_seconds=time.time() - run_start,
+        config_snapshot=config_snapshot,
     )
 
 
@@ -653,6 +671,7 @@ def _run_training_and_finalize(
     attacker_instruction: str,
     defense_prompt: str,
     run_start: float,
+    config_snapshot: dict[str, Any],
 ) -> None:
     model = ctx.adversary_session.runtime
     optimizer = torch.optim.AdamW(model.parameters(), lr=coev_cfg.lr, weight_decay=coev_cfg.weight_decay)
@@ -808,11 +827,12 @@ def _run_training_and_finalize(
     optimized_metrics, optimized_df = _eval_suite(ctx, eval_cfg, args, attacker_instruction, defense_prompt, eval_examples)
     print("Optimized metrics:", optimized_metrics)
 
-    _try_save_adapters_print(ctx, args.save_dir)
+    results_dir = Path(args.results_dir).resolve()
+    _try_save_adapters_print(ctx, args.save_dir, results_dir)
 
     save_artifacts(
         args=args,
-        results_dir=Path(args.results_dir).resolve(),
+        results_dir=results_dir,
         baseline_metrics=baseline_metrics,
         optimized_metrics=optimized_metrics,
         baseline_df=baseline_df,
@@ -826,6 +846,7 @@ def _run_training_and_finalize(
         run_seconds=time.time() - run_start,
         gepa_final_attacker_val_score=gepa_final_attacker_val_score,
         gepa_final_defender_val_score=gepa_final_defender_val_score,
+        config_snapshot=config_snapshot,
     )
 
 
@@ -865,6 +886,7 @@ def main() -> None:
     )
 
     ctx = _build_context(args, defaults, device)
+    config_snapshot = build_config_snapshot(defaults, cli_args=args)
     train_prompts, _, eval_examples = _load_prompt_slices(args, coev_cfg)
 
     attacker_instruction = coev_cfg.initial_attacker_instruction
@@ -873,7 +895,16 @@ def main() -> None:
     print("Baseline metrics:", baseline_metrics)
 
     if args.mode == "eval":
-        _run_eval_only(args, ctx, baseline_metrics, baseline_df, attacker_instruction, defense_prompt, run_start)
+        _run_eval_only(
+            args,
+            ctx,
+            baseline_metrics,
+            baseline_df,
+            attacker_instruction,
+            defense_prompt,
+            run_start,
+            config_snapshot,
+        )
         return
 
     _run_training_and_finalize(
@@ -889,6 +920,7 @@ def main() -> None:
         attacker_instruction,
         defense_prompt,
         run_start,
+        config_snapshot,
     )
 
 

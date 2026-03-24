@@ -345,6 +345,8 @@ How to use them:
 #### `runs/adversary_run.py`
 
 - `adversary_run_metrics.json`
+- `eval_metrics_before_vs_after_training.csv` and per-example `eval_outputs_before_training.csv` / `eval_outputs_after_training.csv` (adversary **weights** before vs after REINFORCE; prompts are not optimized)
+- `plot_eval_metrics_before_vs_after_training.png` (same comparison as the metrics CSV)
 - training CSV (`training_csv_name`, default from `configs/default.yaml`)
 - eval CSV (`eval_csv_name`, default from `configs/default.yaml`)
 - `run_manifest.json`
@@ -364,8 +366,8 @@ How to use them:
 
 #### `runs/gepa_run.py`
 
-- best prompt text file (`optimized_system_prompt.txt`)
-- metrics JSON (`gepa_metrics.json`)
+- best prompt text file (`optimized_system_prompt.txt` under `--results-dir`)
+- metrics JSON (`gepa_run_metrics.json`)
 - CSV bundle (comparison, baseline outputs, optimized outputs)
 - optional `optimizer_trace.csv` when trace rows exist
 - baseline-vs-optimized bar plot

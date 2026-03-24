@@ -33,7 +33,7 @@ from src.runtime import (
     build_local_hf_target_session,
     resolve_hf_token,
 )
-from src.runtime.defaults import load_default_config
+from src.runtime.defaults import build_config_snapshot, load_default_config
 from src.steering_methods.activation_add import ActivationAddition, extract_steering_vectors
 from src.types import RunManifest
 
@@ -210,6 +210,7 @@ def save_artifacts(
     seed: int,
     args: argparse.Namespace,
     run_seconds: float,
+    config_snapshot: dict[str, Any],
 ) -> None:
     """Persist CSV/JSON artifacts and run manifest."""
     results_dir.mkdir(parents=True, exist_ok=True)
@@ -250,6 +251,7 @@ def save_artifacts(
             "vector_dir": str(vector_dir),
             "asr": summary_payload["asr"],
         },
+        config_snapshot=config_snapshot,
     )
     manifest_path = write_run_manifest(results_dir=results_dir, payload=manifest)
 
@@ -377,6 +379,7 @@ def main() -> None:
         seed=args.seed,
         args=args,
         run_seconds=run_seconds,
+        config_snapshot=build_config_snapshot(defaults, cli_args=args),
     )
 
     print("Vector steering run complete.")

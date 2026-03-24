@@ -94,11 +94,24 @@ def compute_reward_and_verdict(
 def maybe_save_adapters(
     adversary_session: GenerationSession,
     save_dir: str | None,
+    *,
+    results_dir: Path | None = None,
 ) -> str | None:
-    """Save adversary adapters if requested and return saved path."""
+    """Save adversary adapters if requested and return saved path.
+
+    If ``results_dir`` is set and ``save_dir`` is a relative path, the output
+    directory is ``results_dir / save_dir`` (not the process working directory).
+    Absolute ``save_dir`` paths are respected as-is.
+    """
     if not save_dir:
         return None
-    output_dir = Path(save_dir).resolve()
+    raw = Path(save_dir)
+    if raw.is_absolute():
+        output_dir = raw.resolve()
+    elif results_dir is not None:
+        output_dir = (results_dir / raw).resolve()
+    else:
+        output_dir = raw.resolve()
     runtime = adversary_session.runtime
     if not hasattr(runtime, "save_adapters"):
         raise RuntimeError("Adversary runtime must expose save_adapters().")

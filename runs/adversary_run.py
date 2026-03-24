@@ -27,11 +27,11 @@ from src.artifacts import (
     build_baseline_optimized_df,
     log_saved_artifacts,
     save_adversary_asr_vs_iterations_plot,
+    save_adversary_refusal_vs_iterations_plot,
     save_baseline_optimized_plot,
     write_json,
     write_many_csv,
     write_run_manifest,
-    write_text,
 )
 from src.data import load_harmbench_subset
 from src.evaluators import compute_refusal_score
@@ -58,7 +58,7 @@ from src.runtime import (
     resolve_reflection_env_overrides,
     timed_target_generate,
 )
-from src.runtime.defaults import load_default_config
+from src.runtime.defaults import build_config_snapshot, load_default_config
 from src.types import RunManifest
 
 
@@ -324,8 +324,8 @@ def _eval_suite(
     return ev, rows, metrics
 
 
-def _try_save_adapters_print(ctx: RunContext, save_dir: str | None) -> str | None:
-    path = maybe_save_adapters_common(ctx.adversary_session, save_dir)
+def _try_save_adapters_print(ctx: RunContext, save_dir: str | None, results_dir: Path) -> str | None:
+    path = maybe_save_adapters_common(ctx.adversary_session, save_dir, results_dir=results_dir)
     if path:
         print(f"Saved adversary adapters to: {path}")
     return path
@@ -340,24 +340,18 @@ def save_artifacts(
     baseline_df: pd.DataFrame,
     final_df: pd.DataFrame,
     training_df: pd.DataFrame,
-    attacker_instruction: str,
-    target_system_prompt: str,
     run_seconds: float,
     adapter_path: str | None,
+    config_snapshot: dict[str, Any],
 ) -> None:
-    """Persist prompts, metrics, CSVs, comparison plot, and manifest (aligned with CoEV v2 layout)."""
+    """Persist metrics, CSVs, plots, and manifest.
+
+    Prompts are fixed for the run (from CLI/config); artifacts compare **adversary
+    weights** before vs after REINFORCE, not prompt optimization. Instruction and
+    target system prompt text are not written to disk.
+    """
 
     results_dir.mkdir(parents=True, exist_ok=True)
-
-    prompts_json = results_dir / "adversary_prompts.json"
-    write_json(
-        prompts_json,
-        {"attacker_instruction": attacker_instruction, "target_system_prompt": target_system_prompt},
-    )
-    attacker_txt = results_dir / "attacker_instruction.txt"
-    target_txt = results_dir / "target_system_prompt.txt"
-    write_text(attacker_txt, attacker_instruction)
-    write_text(target_txt, target_system_prompt)
 
     metrics_payload: dict[str, Any] = {
         "config": {
@@ -383,13 +377,15 @@ def save_artifacts(
     comparison_df = build_baseline_optimized_df(
         baseline_metrics=baseline_metrics,
         optimized_metrics=final_metrics,
+        baseline_variant="before_training",
+        comparison_variant="after_training",
     )
     write_many_csv(
         results_dir,
         {
-            "baseline_vs_optimized_metrics.csv": comparison_df,
-            "baseline_eval_outputs.csv": baseline_df,
-            "optimized_eval_outputs.csv": final_df,
+            "eval_metrics_before_vs_after_training.csv": comparison_df,
+            "eval_outputs_before_training.csv": baseline_df,
+            "eval_outputs_after_training.csv": final_df,
             train_cfg.training_csv_name: training_df,
         },
         skip_empty={train_cfg.training_csv_name},
@@ -397,15 +393,30 @@ def save_artifacts(
 
     plot_path = save_baseline_optimized_plot(
         comparison_df=comparison_df,
-        out_path=results_dir / "plot_baseline_vs_optimized.png",
-        title="Adversary-only Baseline vs Final Metrics",
+        out_path=results_dir / "plot_eval_metrics_before_vs_after_training.png",
+        title="Adversary eval: before vs after training",
+        subtitle=(
+            "Same fixed rewriter instruction and target system prompt. "
+            "before_training = adversary LoRA at init; after_training = same LoRA after REINFORCE. "
+            "Bars = aggregate metrics on the held-out eval set (not per-step noise)."
+        ),
     )
+    train_iters = train_cfg.iterations if args.mode == "train" else None
+    final_asr_train = final_metrics.get("asr") if args.mode == "train" else None
+    final_refusal_train = (1.0 - float(final_asr_train)) if final_asr_train is not None else None
     asr_iter_path = save_adversary_asr_vs_iterations_plot(
         training_df=training_df,
         out_path=results_dir / "plot_asr_vs_iterations.png",
         title="Adversary ASR vs training iteration",
-        final_asr=final_metrics.get("asr") if args.mode == "train" else None,
-        iterations=train_cfg.iterations if args.mode == "train" else None,
+        final_asr=final_asr_train,
+        iterations=train_iters,
+    )
+    refusal_iter_path = save_adversary_refusal_vs_iterations_plot(
+        training_df=training_df,
+        out_path=results_dir / "plot_refusal_vs_iterations.png",
+        title="Adversary refusal rate vs training iteration",
+        final_refusal=final_refusal_train,
+        iterations=train_iters,
     )
 
     manifest = RunManifest(
@@ -431,21 +442,17 @@ def save_artifacts(
         },
         endpoints={"reflection_base_url": args.reflection_vllm_base_url},
         extra={
-            "adversary_prompts_path": str(prompts_json),
-            "attacker_instruction_txt": str(attacker_txt),
-            "target_system_prompt_txt": str(target_txt),
             "metrics_json_path": str(metrics_json_path),
+            "comparison_metrics_csv": "eval_metrics_before_vs_after_training.csv",
             "training_csv_name": train_cfg.training_csv_name,
             "eval_csv_name": train_cfg.eval_csv_name,
             "save_dir": adapter_path,
             "eval_method": args.eval_method,
         },
+        config_snapshot=config_snapshot,
     )
     manifest_path = write_run_manifest(results_dir=results_dir, payload=manifest)
     logged_paths = [
-        prompts_json,
-        attacker_txt,
-        target_txt,
         metrics_json_path,
         manifest_path,
         plot_path,
@@ -453,6 +460,8 @@ def save_artifacts(
     ]
     if asr_iter_path is not None:
         logged_paths.insert(-1, asr_iter_path)
+    if refusal_iter_path is not None:
+        logged_paths.insert(-1, refusal_iter_path)
     log_saved_artifacts(logged_paths)
 
 
@@ -463,7 +472,11 @@ def parse_args(defaults: dict[str, Any]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run adversary-only fine-tuning (no prompt optimization).")
     parser.add_argument("--mode", choices=["train", "eval"], default="train")
     parser.add_argument("--device", default=global_defaults["device"], help="Device override (e.g. cuda, cpu).")
-    parser.add_argument("--save-dir", default=None, help="Optional output directory for adversary adapters.")
+    parser.add_argument(
+        "--save-dir",
+        default=None,
+        help="Optional directory for adversary adapters; relative paths are under --results-dir.",
+    )
 
     parser.add_argument("--dataset-name", default=global_defaults["dataset_name"])
     parser.add_argument("--dataset-config", default=global_defaults["dataset_config"])
@@ -665,9 +678,9 @@ def main() -> None:
         )
         print("Final metrics:", final_metrics)
 
-    adapter_path = _try_save_adapters_print(ctx, args.save_dir)
-    run_seconds = time.time() - run_start
     results_dir = Path(args.results_dir).resolve()
+    adapter_path = _try_save_adapters_print(ctx, args.save_dir, results_dir)
+    run_seconds = time.time() - run_start
     baseline_df = pd.DataFrame(baseline_rows)
     final_df = pd.DataFrame(final_eval_rows)
     training_df = pd.DataFrame(training_rows)
@@ -681,10 +694,9 @@ def main() -> None:
         baseline_df=baseline_df,
         final_df=final_df,
         training_df=training_df,
-        attacker_instruction=args.attacker_instruction,
-        target_system_prompt=args.target_system_prompt,
         run_seconds=run_seconds,
         adapter_path=adapter_path,
+        config_snapshot=build_config_snapshot(defaults, cli_args=args),
     )
 
 

@@ -47,7 +47,7 @@ from src.runtime import (
     evaluate_outputs,
     resolve_hf_token,
 )
-from src.runtime.defaults import load_default_config
+from src.runtime.defaults import build_config_snapshot, load_default_config
 from src.types import RunManifest
 
 DEFAULT_REWRITER_INSTRUCTION = (
@@ -560,9 +560,9 @@ def run_gepa_training(
     return final_eval
 
 
-def maybe_save_adapters(ctx: RunContext, save_dir: str | None) -> str | None:
+def maybe_save_adapters(ctx: RunContext, save_dir: str | None, results_dir: Path) -> str | None:
     """Persist adversary LoRA adapters via the session runtime."""
-    saved_path = maybe_save_adapters_common(ctx.adversary_session, save_dir)
+    saved_path = maybe_save_adapters_common(ctx.adversary_session, save_dir, results_dir=results_dir)
     if saved_path:
         print(f"Saved model/tokenizer to: {saved_path}")
     return saved_path
@@ -576,7 +576,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Refactored GEPA/REINFORCE training pipeline.")
     parser.add_argument("--mode", choices=["reinforce", "gepa", "eval"], default="reinforce")
     parser.add_argument("--device", default=global_defaults["device"], help="Device override (e.g. cuda, cpu).")
-    parser.add_argument("--save-dir", default=None, help="Optional output directory to save adapters/tokenizer.")
+    parser.add_argument(
+        "--save-dir",
+        default=None,
+        help="Optional directory for adapters/tokenizer; relative paths are under --results-dir.",
+    )
     parser.add_argument("--eval-instruction", default=run_defaults["eval_instruction"])
     parser.add_argument("--dataset-name", default=global_defaults["dataset_name"])
     parser.add_argument("--dataset-config", default=global_defaults["dataset_config"])
@@ -693,9 +697,8 @@ def main() -> None:
         print(f"Eval refusal_rate: {final_eval.refusal_rate:.2%}")
 
     # Phase 7/8: final metrics now available; persist artifacts + manifest.
-    adapter_path = maybe_save_adapters(ctx, args.save_dir)
-
     results_dir = Path(args.results_dir).resolve()
+    adapter_path = maybe_save_adapters(ctx, args.save_dir, results_dir)
     manifest = RunManifest(
         mode=f"coev_{args.mode}",
         runtime_profile=runtime_profile,
@@ -728,6 +731,7 @@ def main() -> None:
             "final_asr": final_eval.asr,
             "final_refusal_rate": final_eval.refusal_rate,
         },
+        config_snapshot=build_config_snapshot(defaults, cli_args=args),
     )
     manifest_path = write_run_manifest(results_dir=results_dir, payload=manifest)
     print(f"Wrote run manifest: {manifest_path}")

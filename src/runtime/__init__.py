@@ -12,7 +12,7 @@ from .config import (
     TargetModelConfig,
     UnslothAdversaryConfig,
 )
-from .defaults import load_default_config
+from .defaults import build_config_snapshot, load_default_config, resolve_config_path
 from .target_factory import (
     build_local_hf_target_session,
     build_reflection_gateway_for_defaults,
@@ -62,6 +62,8 @@ __all__ = [
     "run_gepa_prompt_optimization",
     "run_dual_role_gepa_prompt_optimization",
     "load_default_config",
+    "build_config_snapshot",
+    "resolve_config_path",
     "build_vllm_target_session",
     "build_local_hf_target_session",
     "build_reflection_gateway_for_defaults",

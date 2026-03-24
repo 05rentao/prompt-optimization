@@ -31,7 +31,7 @@ from tqdm.auto import tqdm
 from src.artifacts import (
     log_saved_artifacts,
     save_baseline_optimized_plot,
-    save_gepa_asr_vs_evaluator_calls_plot,
+    save_gepa_refusal_vs_evaluator_calls_plot,
     save_trajectory_plot,
     write_json,
     write_many_csv,
@@ -56,7 +56,7 @@ from src.runtime import (
     resolve_hf_token,
     timed_target_generate,
 )
-from src.runtime.defaults import load_default_config
+from src.runtime.defaults import build_config_snapshot, load_default_config
 from src.runtime.openai_reflection_gateway import OpenAIReflectionGateway
 from src.types import RunManifest
 
@@ -211,7 +211,6 @@ def parse_args(defaults: dict[str, Any]) -> argparse.Namespace:
     parser.add_argument("--asr-threshold", type=float, default=run_defaults["asr_threshold"])
 
     parser.add_argument("--baseline-system-prompt", default=run_defaults["baseline_system_prompt"])
-    parser.add_argument("--root-dir", default=str(Path.cwd()))
     parser.add_argument("--results-dir", default=run_defaults["results_dir"])
     return parser.parse_args()
 
@@ -229,8 +228,11 @@ def _patch_args_from_yaml(args: argparse.Namespace, defaults: dict[str, Any]) ->
 
 def _build_eval_context(args: argparse.Namespace, defaults: dict[str, Any], device: str) -> EvalContext:
     target_session = build_vllm_target_session(defaults)
+    judge_model_id = defaults["runtime"]["models"]["judge_model_id"]
     judge_session = (
-        RuntimeCatalog.build_judge_session(HarmbenchJudgeConfig()) if args.eval_method == "judge" else None
+        RuntimeCatalog.build_judge_session(HarmbenchJudgeConfig(model_id=judge_model_id))
+        if args.eval_method == "judge"
+        else None
     )
     return EvalContext(target_session=target_session, judge_session=judge_session, device=device)
 
@@ -257,6 +259,8 @@ def run_gepa_optimization(
     train_data: list[dict[str, Any]],
     val_data: list[dict[str, Any]],
     baseline_system_prompt: str,
+    eval_cfg: EvaluationConfig,
+    judge_session: GenerationSession | None,
 ) -> tuple[Any, list[dict[str, Any]], float]:
     """Run GEPA optimization loop and collect per-call trace metadata."""
     optimization_cfg = GepaPromptOptimizationConfig(
@@ -267,6 +271,7 @@ def run_gepa_optimization(
     )
 
     print("Starting GEPA optimization...")
+    print(f"GEPA inner-loop eval: {eval_cfg.method}")
     print(f"Target model:      {args.target_model_name}")
     print(f"Reflection model:  openai/{args.reflection_model_name}")
     print(f"Reflection URL:    {args.reflection_vllm_base_url}")
@@ -279,13 +284,14 @@ def run_gepa_optimization(
         train_data=train_data,
         val_data=val_data,
         baseline_system_prompt=baseline_system_prompt,
+        eval_cfg=eval_cfg,
+        judge_session=judge_session,
     )
     print(f"GEPA optimization finished in {run_seconds:.1f} seconds.")
     return result, optimizer_trace, run_seconds
 
 
 def save_artifacts(
-    root_dir: Path,
     results_dir: Path,
     args: argparse.Namespace,
     max_metric_calls: int,
@@ -298,9 +304,10 @@ def save_artifacts(
     optimized_df: pd.DataFrame,
     optimizer_trace: list[dict[str, Any]],
     optimized_system_prompt: str,
+    config_snapshot: dict[str, Any],
 ) -> None:
     """Persist prompt, metrics, tables, plots, and run manifest artifacts."""
-    optimized_prompt_path = root_dir / "optimized_system_prompt.txt"
+    optimized_prompt_path = results_dir / "optimized_system_prompt.txt"
     write_text(optimized_prompt_path, optimized_system_prompt)
 
     metrics_payload = {
@@ -320,7 +327,7 @@ def save_artifacts(
         "optimized_metrics": optimized_metrics,
         "best_score_from_gepa": best_score,
     }
-    metrics_json_path = root_dir / "gepa_run_metrics.json"
+    metrics_json_path = results_dir / "gepa_run_metrics.json"
     write_json(metrics_json_path, metrics_payload)
 
     manifest = RunManifest(
@@ -349,6 +356,7 @@ def save_artifacts(
             "optimized_prompt_path": str(optimized_prompt_path),
             "metrics_json_path": str(metrics_json_path),
         },
+        config_snapshot=config_snapshot,
     )
     manifest_path = write_run_manifest(results_dir=results_dir, payload=manifest)
 
@@ -378,17 +386,17 @@ def save_artifacts(
         out_path=fig2_path,
         title="GEPA Optimization Trajectory",
     )
-    asr_calls_path = save_gepa_asr_vs_evaluator_calls_plot(
+    refusal_calls_path = save_gepa_refusal_vs_evaluator_calls_plot(
         trace_df=trace_df,
-        out_path=results_dir / "plot_asr_vs_evaluator_calls.png",
-        title="GEPA ASR vs evaluator call (from refusal score trace)",
+        out_path=results_dir / "plot_refusal_vs_evaluator_calls.png",
+        title="GEPA refusal vs evaluator call",
     )
 
     logged_paths = [optimized_prompt_path, metrics_json_path, comparison_csv_path, manifest_path, fig1_path]
     if trajectory_path is not None:
         logged_paths.append(trajectory_path)
-    if asr_calls_path is not None:
-        logged_paths.append(asr_calls_path)
+    if refusal_calls_path is not None:
+        logged_paths.append(refusal_calls_path)
     logged_paths.append(results_dir)
     log_saved_artifacts(logged_paths)
 
@@ -426,7 +434,6 @@ def main() -> None:
     )
     print(f"Loaded train={len(train_data)}, val={len(val_data)} from {args.dataset_name}:{args.dataset_split}")
 
-    root_dir = Path(args.root_dir).resolve()
     results_dir = Path(args.results_dir).resolve()
     results_dir.mkdir(parents=True, exist_ok=True)
 
@@ -449,6 +456,8 @@ def main() -> None:
         train_data=train_data,
         val_data=val_data,
         baseline_system_prompt=args.baseline_system_prompt,
+        eval_cfg=eval_cfg,
+        judge_session=ctx.judge_session,
     )
     best_candidate, best_score = extract_best_candidate_and_score(gepa_result)
     optimized_system_prompt = best_candidate.get("system_prompt", args.baseline_system_prompt)
@@ -473,7 +482,6 @@ def main() -> None:
     )
 
     save_artifacts(
-        root_dir=root_dir,
         results_dir=results_dir,
         args=args,
         max_metric_calls=args.max_metric_calls,
@@ -486,6 +494,7 @@ def main() -> None:
         optimized_df=optimized_df,
         optimizer_trace=optimizer_trace,
         optimized_system_prompt=optimized_system_prompt,
+        config_snapshot=build_config_snapshot(defaults, cli_args=args),
     )
 
 
