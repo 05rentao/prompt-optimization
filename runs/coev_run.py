@@ -26,6 +26,7 @@ from typing import Any, Iterable
 import torch
 import torch.nn.functional as f
 import pandas as pd
+from collections.abc import Sequence
 
 from src.artifacts import write_run_manifest
 from src.data import load_harmbench_subset
@@ -103,6 +104,8 @@ class ReinforceConfig:
     eval_slice_start: int = 100
     eval_slice_end: int = 110     # Eval against 10 prompts
     csv_path: str = "smoke_test_reinforce.csv"
+    rloo_n: int = 1              # K adversary samples per step (1 = vanilla REINFORCE)
+    target_queries: int = 1      # Times to query target per attack; reward = fraction compliant
 
 
 # @dataclass
@@ -132,6 +135,8 @@ class GepaConfig:
     csv_path: str = "smoke_test_gepa.csv"
     initial_attacker_instruction: str = DEFAULT_GEPA_ATTACKER_INSTRUCTION
     initial_defense_prompt: str = DEFAULT_DEFENSE_PROMPT
+    rloo_n: int = 1              # K adversary samples per RLOO step
+    target_queries: int = 1      # Times to query target per attack; reward = fraction compliant
 
 
 @dataclass
@@ -258,6 +263,117 @@ def reinforce_update_batch_sgd(model: Any, optimizer: Any, gen_ids: Any, prompt_
     return float(loss.detach().cpu()), logprob_sums.detach()
 
 
+def pad_gen_ids_batch(
+    batch_gen_ids: Sequence[torch.Tensor], pad_id: int
+) -> tuple[torch.Tensor, list[int]]:
+    """Right-pad (1, L) tensors to a common length for a batched forward pass."""
+    lengths = [int(x.shape[-1]) for x in batch_gen_ids]
+    max_len = max(lengths)
+    rows: list[torch.Tensor] = []
+    for x in batch_gen_ids:
+        L = x.size(1)
+        if L < max_len:
+            pad = torch.full((1, max_len - L), pad_id, dtype=x.dtype, device=x.device)
+            x = torch.cat([x, pad], dim=1)
+        rows.append(x)
+    return torch.cat(rows, dim=0), lengths
+
+
+def rloo_update_batch_sgd(
+    model: Any,
+    optimizer: Any,
+    gen_ids: torch.Tensor,
+    prompt_lens: list[int],
+    rewards: torch.Tensor,
+    valid_seq_lens: list[int] | None = None,
+) -> tuple[float, Any]:
+    """RLOO policy-gradient step.
+
+    For K > 1 samples from the same prompt, each sample's advantage is its
+    reward minus the mean of the other K-1 rewards (leave-one-out baseline).
+    This reduces variance compared to vanilla REINFORCE without introducing
+    bias, and gives a gradient signal even when some samples fail.
+
+    For K = 1 the update is identical to vanilla REINFORCE.
+    """
+    model.train()
+    if valid_seq_lens is None:
+        valid_seq_lens = [int(gen_ids.size(1))] * int(gen_ids.size(0))
+
+    out = model(input_ids=gen_ids, use_cache=False)
+    logits = out.logits
+    log_probs = f.log_softmax(logits[:, :-1, :], dim=-1)
+
+    logprob_sums = []
+    for i in range(gen_ids.size(0)):
+        prompt_len = int(prompt_lens[i])
+        valid_end = int(valid_seq_lens[i])
+        comp_ids = gen_ids[i, prompt_len:valid_end].clone()
+        if comp_ids.numel() == 0:
+            logprob_sums.append(torch.tensor(0.0, device=gen_ids.device))
+            continue
+        start = prompt_len - 1
+        end = start + comp_ids.size(0)
+        lp = log_probs[i, start:end, :]
+        tok_lp = torch.gather(lp, -1, comp_ids.unsqueeze(-1)).squeeze(-1)
+        logprob_sums.append(tok_lp.sum())
+
+    logprob_sums = torch.stack(logprob_sums)
+
+    K = rewards.size(0)
+    if K > 1:
+        # Leave-one-out baseline: advantage_i = reward_i - mean(reward_{j != i})
+        # Algebraically equivalent to (reward_i - mean_all) * K/(K-1)
+        mean_reward = rewards.mean()
+        advantages = (rewards - mean_reward) * (K / (K - 1))
+    else:
+        advantages = rewards
+
+    loss = -(advantages.detach() * logprob_sums).mean()
+    optimizer.zero_grad(set_to_none=True)
+    loss.backward()
+    optimizer.step()
+    return float(loss.detach().cpu()), logprob_sums.detach()
+
+
+def multi_query_reward(
+    prompt: str,
+    adversary_text: str,
+    n_queries: int,
+    ctx: RunContext,
+    eval_cfg: EvaluationConfig,
+    defense_prompt: str | None = None,
+) -> tuple[float, str]:
+    """Query the target model n_queries times and return the fraction that succeed.
+
+    A single query gives a binary 0/1 reward (noisy). Multiple queries give a
+    soft reward in {0, 1/n, 2/n, ..., 1} that is less sensitive to lucky/unlucky
+    single generations. The verdict returned is from the last query.
+    """
+    if n_queries <= 1:
+        response = target_generate(adversary_text, ctx.target_session, ctx.device, defense_prompt)
+        return compute_reward_and_verdict(
+            behavior=prompt,
+            generation=response,
+            eval_cfg=eval_cfg,
+            judge_session=ctx.judge_session if eval_cfg.method == "judge" else None,
+        )
+
+    total_reward = 0.0
+    last_verdict = "No"
+    for _ in range(n_queries):
+        response = target_generate(adversary_text, ctx.target_session, ctx.device, defense_prompt)
+        r, v = compute_reward_and_verdict(
+            behavior=prompt,
+            generation=response,
+            eval_cfg=eval_cfg,
+            judge_session=ctx.judge_session if eval_cfg.method == "judge" else None,
+        )
+        total_reward += r
+        last_verdict = v
+    return total_reward / n_queries, last_verdict
+
+
 def generate_harmbench_results(
     behaviors: str | Iterable[str],
     generations: list[str],
@@ -363,32 +479,65 @@ def run_reinforce_training(
         "prompt",
         "adversary_output",
         "target_response",
-        "reward",
+        "mean_reward",
         "loss",
         "verdict",
         "eval_asr",
         "eval_refusal_rate",
+        "max_reward",
+        "rloo_n",
+        "target_queries",
     ]
+    rloo_n = max(1, cfg.rloo_n)
+    target_queries = max(1, cfg.target_queries)
+    tok = model.tokenizer
+    pad_id = tok.pad_token_id if tok.pad_token_id is not None else tok.eos_token_id
+
     log_rows: list[list[Any]] = []
     for i in range(cfg.iterations):
         idx = torch.randint(0, len(train_prompts), ()).item()
         prompt = train_prompts[idx]
 
-        # Core generation and judge logic
-        res = adversary_output(prompt, DEFAULT_REWRITER_INSTRUCTION, ctx.adversary_session, ctx.device)
-        adversary_text = res["completion_text"].strip()
-        target_response = target_generate(adversary_text, target_session=ctx.target_session, device=ctx.device)
+        # --- RLOO: generate rloo_n attack candidates for the same behavior ---
+        batch_gen_ids: list[torch.Tensor] = []
+        batch_prompt_lens: list[int] = []
+        batch_rewards: list[float] = []
+        adv_texts: list[str] = []
+        last_verdict = "No"
 
-        reward, verdict = compute_reward_and_verdict(
-            behavior=prompt,
-            generation=target_response,
-            eval_cfg=eval_cfg,
-            judge_session=ctx.judge_session if eval_cfg.method == "judge" else None,
+        for _ in range(rloo_n):
+            res = adversary_output(prompt, DEFAULT_REWRITER_INSTRUCTION, ctx.adversary_session, ctx.device)
+            adversary_text = res["completion_text"].strip()
+            reward, verdict = multi_query_reward(
+                prompt=prompt,
+                adversary_text=adversary_text,
+                n_queries=target_queries,
+                ctx=ctx,
+                eval_cfg=eval_cfg,
+            )
+            batch_gen_ids.append(res["gen_ids"])
+            batch_prompt_lens.append(res["prompt_len"])
+            batch_rewards.append(reward)
+            adv_texts.append(adversary_text)
+            last_verdict = verdict
+
+        # Pad sequences to the same length, then run RLOO update
+        padded_ids, valid_lens = pad_gen_ids_batch(batch_gen_ids, int(pad_id))
+        rewards_t = torch.tensor(batch_rewards, dtype=torch.float32, device=padded_ids.device)
+        loss_val, _ = rloo_update_batch_sgd(
+            model=model,
+            optimizer=optimizer,
+            gen_ids=padded_ids,
+            prompt_lens=batch_prompt_lens,
+            rewards=rewards_t,
+            valid_seq_lens=valid_lens,
         )
 
-        # RL Update
-        rewards = torch.tensor([reward], dtype=torch.float32, device=res["gen_ids"].device)  # make reward into a tensor
-        loss_val, _ = reinforce_update_batch_sgd(model, optimizer, res["gen_ids"], [res["prompt_len"]], rewards)
+        mean_reward = float(rewards_t.mean().item())
+        max_reward = float(rewards_t.max().item())
+        adversary_text = adv_texts[0]
+        reward = mean_reward
+        verdict = last_verdict
 
         eval_asr: str | float = ""
         eval_refusal_rate: str | float = ""
@@ -401,7 +550,11 @@ def run_reinforce_training(
             )
             eval_asr = eval_result.asr
             eval_refusal_rate = eval_result.refusal_rate
-            print(f"Iter {i} | Current ASR: {eval_asr:.3f} | refusal_rate: {eval_refusal_rate:.3f}")
+            print(
+                f"Iter {i} | ASR: {eval_asr:.3f} | refusal_rate: {eval_refusal_rate:.3f} "
+                f"| mean_reward: {mean_reward:.3f} | max_reward: {max_reward:.3f} "
+                f"| rloo_n: {rloo_n} | target_queries: {target_queries}"
+            )
 
         log_rows.append(
             [
@@ -409,12 +562,15 @@ def run_reinforce_training(
                 idx,
                 clean_text(prompt),
                 clean_text(adversary_text),
-                clean_text(target_response),
-                reward,
+                "",
+                mean_reward,
                 loss_val,
                 verdict,
                 eval_asr,
                 eval_refusal_rate,
+                max_reward,
+                rloo_n,
+                target_queries,
             ]
         )
     pd.DataFrame(log_rows, columns=log_columns).to_csv(cfg.csv_path, index=False)
@@ -445,6 +601,11 @@ def run_gepa_training(
     model = ctx.adversary_session.runtime
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 
+    rloo_n = max(1, cfg.rloo_n)
+    target_queries = max(1, cfg.target_queries)
+    tok = model.tokenizer
+    pad_id = tok.pad_token_id if tok.pad_token_id is not None else tok.eos_token_id
+
     attacker_instruction = cfg.initial_attacker_instruction  # updated by GEPA, default to DEFAULT_GEPA_ATTACKER_INSTRUCTION
     defense_prompt = cfg.initial_defense_prompt  # updated by GEPA
 
@@ -468,34 +629,47 @@ def run_gepa_training(
         print(f"\n--- Stage {stage} ---")
         stage_logs: list[dict[str, Any]] = []
 
-        # first freeze system prompts and just update adversary weights w reinforce
+        # first freeze system prompts and just update adversary weights w RLOO
         for i in range(cfg.iters_per_stage):
             idx = torch.randint(0, len(train_prompts), ()).item()
             original_prompt = train_prompts[idx]
-            res = adversary_output(original_prompt, attacker_instruction, ctx.adversary_session, ctx.device)
-            adv_rewrite = res["completion_text"].strip()
 
-            target_resp = target_generate(
-                adv_rewrite,
-                target_session=ctx.target_session,
-                device=ctx.device,
-                defense_prompt=defense_prompt,
-            )
-            reward, verdict = compute_reward_and_verdict(
-                behavior=original_prompt,
-                generation=target_resp,
-                eval_cfg=eval_cfg,
-                judge_session=ctx.judge_session if eval_cfg.method == "judge" else None,
+            batch_gen_ids: list[torch.Tensor] = []
+            batch_prompt_lens: list[int] = []
+            batch_rewards: list[float] = []
+            adv_rewrites: list[str] = []
+            last_verdict = "No"
+
+            for _ in range(rloo_n):
+                res = adversary_output(original_prompt, attacker_instruction, ctx.adversary_session, ctx.device)
+                adv_rewrite = res["completion_text"].strip()
+                reward, verdict = multi_query_reward(
+                    prompt=original_prompt,
+                    adversary_text=adv_rewrite,
+                    n_queries=target_queries,
+                    ctx=ctx,
+                    eval_cfg=eval_cfg,
+                    defense_prompt=defense_prompt,
+                )
+                batch_gen_ids.append(res["gen_ids"])
+                batch_prompt_lens.append(res["prompt_len"])
+                batch_rewards.append(reward)
+                adv_rewrites.append(adv_rewrite)
+                last_verdict = verdict
+
+            padded_ids, valid_lens = pad_gen_ids_batch(batch_gen_ids, int(pad_id))
+            rewards_t = torch.tensor(batch_rewards, dtype=torch.float32, device=padded_ids.device)
+            rloo_update_batch_sgd(
+                model=model,
+                optimizer=optimizer,
+                gen_ids=padded_ids,
+                prompt_lens=batch_prompt_lens,
+                rewards=rewards_t,
+                valid_seq_lens=valid_lens,
             )
 
-            reinforce_update_batch_sgd(
-                model,
-                optimizer,
-                res["gen_ids"],
-                [res["prompt_len"]],
-                torch.tensor([reward], dtype=torch.float32, device=res["gen_ids"].device),
-            )
-            stage_logs.append({"adv": adv_rewrite, "reward": reward})
+            mean_reward = float(rewards_t.mean().item())
+            stage_logs.append({"adv": adv_rewrites[0], "reward": mean_reward})
 
             log_rows.append(
                 [
@@ -504,10 +678,10 @@ def run_gepa_training(
                     clean_text(attacker_instruction),
                     clean_text(defense_prompt),
                     clean_text(original_prompt),
-                    clean_text(adv_rewrite),
-                    clean_text(target_resp),
-                    reward,
-                    verdict,
+                    clean_text(adv_rewrites[0]),
+                    "",
+                    mean_reward,
+                    last_verdict,
                     "",
                     "",
                 ]
@@ -592,6 +766,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--eval-method", choices=["judge", "heuristic"], default=run_defaults["eval_method"])
     parser.add_argument("--refusal-threshold", type=float, default=run_defaults["refusal_threshold"])
     parser.add_argument("--asr-threshold", type=float, default=run_defaults["asr_threshold"])
+    parser.add_argument(
+        "--rloo-n",
+        type=int,
+        default=1,
+        help="Number of adversary samples per RLOO step (1 = vanilla REINFORCE, 5 = recommended).",
+    )
+    parser.add_argument(
+        "--target-queries",
+        type=int,
+        default=1,
+        help="Times to query the target per attack; reward = fraction compliant (1 = binary reward).",
+    )
     return parser.parse_args()
 
 
@@ -618,7 +804,11 @@ def main() -> None:
     adversary_cfg = ModelConfig(model_id=model_defaults["adversary_model_id"])
     target_cfg = TargetModelConfig(model_id=model_defaults["target_model_name"])
     reinforce_cfg = ReinforceConfig(**run_defaults["reinforce"])
+    reinforce_cfg.rloo_n = args.rloo_n
+    reinforce_cfg.target_queries = args.target_queries
     gepa_cfg = GepaConfig(**run_defaults["gepa"])
+    gepa_cfg.rloo_n = args.rloo_n
+    gepa_cfg.target_queries = args.target_queries
 
     adversary_session = load_adversary_model(adversary_cfg)
     target_session = load_target_model(defaults)
