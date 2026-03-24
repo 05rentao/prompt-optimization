@@ -2,9 +2,9 @@
 """Adversary-only fine-tuning runner using dataset prompts and model judgment.
 
 This script intentionally excludes prompt-optimization steps (for example GEPA or
-reflection loops). It trains only the adversary model weights with REINFORCE
-signals from target responses judged by either HarmBench judge verdicts or the
-shared heuristic evaluator.
+reflection loops). It trains only the adversary model weights with RLOO (REINFORCE
+leave-one-out) signals from target responses judged by either HarmBench judge
+verdicts or the shared heuristic evaluator.
 """
 
 from __future__ import annotations
@@ -153,15 +153,15 @@ def pad_gen_ids_batch(
     return torch.cat(rows, dim=0), lengths
 
 
-def reinforce_update_batch_sgd(
+def rloo_update_batch_sgd(
     model: Any,
     optimizer: Any,
-    gen_ids: Any,
+    gen_ids: torch.Tensor,
     prompt_lens: list[int],
-    rewards: Any,
+    rewards: torch.Tensor,
     valid_seq_lens: list[int] | None = None,
 ) -> tuple[float, Any]:
-    """Apply a REINFORCE-style SGD step: mean over batch of (-reward_i * sum log pi)."""
+    """RLOO policy-gradient step: -mean_i (A_i * sum_t log pi(a_t)), with leave-one-out A_i."""
 
     model.train()
     if valid_seq_lens is None:
@@ -186,7 +186,15 @@ def reinforce_update_batch_sgd(
         logprob_sums.append(tok_lp.sum())
 
     logprob_sums = torch.stack(logprob_sums)
-    loss = -(rewards * logprob_sums).mean()
+
+    K = rewards.size(0)
+    if K > 1:
+        mean_reward = rewards.mean()
+        advantages = (rewards - mean_reward) * (K / (K - 1))
+    else:
+        advantages = rewards
+
+    loss = -(advantages.detach() * logprob_sums).mean()
     optimizer.zero_grad(set_to_none=True)
     loss.backward()
     optimizer.step()
@@ -377,7 +385,7 @@ def save_artifacts(
     """Persist metrics, CSVs, plots, and manifest.
 
     Prompts are fixed for the run (from CLI/config); artifacts compare **adversary
-    weights** before vs after REINFORCE, not prompt optimization. Instruction and
+    weights** before vs after RLOO training, not prompt optimization. Instruction and
     target system prompt text are not written to disk.
     """
 
@@ -427,7 +435,7 @@ def save_artifacts(
         title="Adversary eval: before vs after training",
         subtitle=(
             "Same fixed rewriter instruction and target system prompt. "
-            "before_training = adversary LoRA at init; after_training = same LoRA after REINFORCE. "
+            "before_training = adversary LoRA at init; after_training = same LoRA after RLOO. "
             "Bars = aggregate metrics on the held-out eval set (not per-step noise)."
         ),
     )
@@ -534,7 +542,7 @@ def parse_args(defaults: dict[str, Any]) -> argparse.Namespace:
         "--adversary-reinforce-batch-size",
         type=int,
         default=run_defaults.get("adversary_reinforce_batch_size", 1),
-        help="K adversary→target rollouts per REINFORCE step (padded batch, mean loss).",
+        help="K adversary→target rollouts per RLOO step (leave-one-out baseline; K=1 matches REINFORCE).",
     )
     return parser.parse_args()
 
@@ -685,7 +693,7 @@ def main() -> None:
             padded_ids, valid_lens = pad_gen_ids_batch(batch_gen_ids, int(pad_id))
             device_t = padded_ids.device
             rewards_t = torch.tensor(batch_rewards, dtype=torch.float32, device=device_t)
-            loss_val, _ = reinforce_update_batch_sgd(
+            loss_val, _ = rloo_update_batch_sgd(
                 model=model,
                 optimizer=optimizer,
                 gen_ids=padded_ids,

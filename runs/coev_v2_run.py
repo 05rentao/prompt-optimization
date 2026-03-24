@@ -563,6 +563,7 @@ def parse_args(defaults: dict[str, Any]) -> argparse.Namespace:
         default=run_defaults['adversary_reinforce_batch_size'],
         help="RLOO: rollouts per training step (same key as coev_v2 REINFORCE batch).",
     )
+    return parser.parse_args()
 
 
 def _patch_args_from_yaml(args: argparse.Namespace, defaults: dict[str, Any]) -> None:

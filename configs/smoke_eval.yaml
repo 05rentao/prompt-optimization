@@ -102,6 +102,7 @@ runs:
     train_slice_end: 6
     eval_slice_start: 6
     eval_slice_end: 10
+    adversary_reinforce_batch_size: 2
     max_new_tokens: 96
     training_csv_name: "adversary_training_log.csv"
     eval_csv_name: "adversary_eval_outputs.csv"
