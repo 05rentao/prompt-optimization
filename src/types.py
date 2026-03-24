@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import Any, NotRequired, TypedDict
+from typing import Any, TypedDict
+from typing_extensions import NotRequired
 
 
 @dataclass(frozen=True)
