@@ -67,7 +67,7 @@ For fuller run mode details and setup guidance, use `docs/getting-started.md`.
 
 ```bash
 # GEPA prompt optimization
-uv run runs/gepa_run.py --show-progress
+uv run runs/gepa_run.py
 
 # CoEV baseline runner
 uv run runs/coev_run.py --mode reinforce

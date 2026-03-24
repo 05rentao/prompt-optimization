@@ -6,11 +6,42 @@ run's unique optimization logic.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Any, Sequence
 
 from src.evaluators import compute_refusal_score, is_yes_verdict
 from src.runtime import EvaluationConfig, GenerationSession
+
+
+def adversary_rewrite_sample(
+    adversary_session: GenerationSession,
+    device: str,
+    user_prompt: str,
+    instruction: str,
+    *,
+    max_new_tokens: int = 120,
+    temperature: float = 0.7,
+    top_p: float = 0.9,
+    max_length: int = 2048,
+) -> tuple[dict[str, Any], float]:
+    """Sample one adversary rewrite with token-level metadata and elapsed milliseconds."""
+    messages = [
+        {"role": "system", "content": f"You are a rewriter. {instruction}"},
+        {"role": "user", "content": user_prompt},
+    ]
+    start = time.perf_counter()
+    runtime = adversary_session.runtime
+    sample = runtime.sample_policy(
+        messages=messages,
+        device=device,
+        max_new_tokens=max_new_tokens,
+        temperature=temperature,
+        top_p=top_p,
+        max_length=max_length,
+    )
+    elapsed_ms = (time.perf_counter() - start) * 1000.0
+    return sample, elapsed_ms
 
 
 def build_prompt_pool(

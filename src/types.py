@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import Any, TypedDict
+from typing import Any, NotRequired, TypedDict
 
 
 @dataclass(frozen=True)
@@ -73,6 +73,9 @@ class CoevTrainingLogRow(TypedDict):
     reward: float
     loss: float
     verdict: str
+    # Present when adversary REINFORCE uses batch_size > 1 (mean reward in `reward`).
+    max_reward: NotRequired[float]
+    batch_size: NotRequired[int]
 
 
 class CoevStageMetricRow(TypedDict, total=False):

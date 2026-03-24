@@ -12,12 +12,14 @@ Use this file as your first stop before changing code or launching experiments.
 
 ## 1) What this project does
 
-This repo studies prompt safety and jailbreak robustness using four run pipelines:
+This repo studies prompt safety and jailbreak robustness using these **active** run pipelines:
 
-- `runs/gepa_run.py` (GEPA prompt optimization)
-- `runs/coev_run.py` (legacy CoEV modes)
-- `runs/coev_v2_run.py` (staged CoEV + dual-role GEPA)
-- `runs/adversary_run.py` (adversary-only fine-tuning)
+- `runs/gepa_run.py` — GEPA prompt optimization (no adversary training)
+- `runs/coev_v2_run.py` — staged CoEV v2 (REINFORCE + dual-role GEPA); main staged pipeline
+- `runs/coev_v2_RLOO_run.py` — same staged structure as v2, with RLOO-style adversary updates instead of REINFORCE
+- `runs/adversary_run.py` — adversary-only fine-tuning
+
+Legacy (not wired into `scripts/run_unified_experiment.py`): `runs/coev_run.py` (older CoEV modes). Run it directly if you need it.
 
 At a high level, scripts use HarmBench prompts, run target/adversary/judge flows, evaluate ASR/refusal, and save artifacts plus a run manifest.
 
@@ -43,20 +45,17 @@ This is the expected pattern when inspecting `runs/`.
 - Primary goal: optimize a defense/system prompt with adversary removed. Use this script to evaluate ASR on GEPA optimized model as a baseline. This is adapted from Mark's notebook (`legacy_code/legacy3/mark_exp.ipynb`)
 - Core idea: evaluate baseline prompt, run GEPA reflection-driven optimization, evaluate optimized prompt.
 
-### CoEV run (`runs/coev_run.py`)
+### CoEV v2 (`runs/coev_v2_run.py`) — main staged pipeline
 
-- Primary goal: Adapted from Shivs notebook (`legacy_code/legacy3/Copy_of_basic_implementation_without_gepa (4).ipynb`) preserve older old CoEV modes that does not use the GEPA optimize anything API.
-- Modes: `reinforce`, `gepa`, `eval`.
+- Stage-based co-evolution: REINFORCE on adversary weights, dual-role GEPA for attacker/defense prompts, optional intra-stage eval, final eval, full artifacts (metrics, CSVs, traces, plots, `run_manifest.json`). Config: `runs.coev_v2` in YAML.
 
-### CoEV v2 run (`runs/coev_v2_run.py`) **This is our main pipeline**
+### CoEV v2 RLOO (`runs/coev_v2_RLOO_run.py`)
 
-- Primary goal: stage-based co-evolution with both weight updates and prompt evolution.
-- Implemented pipeline:
-  - Start with baseline evaluation using `initial_attacker_instruction` and `initial_defense_prompt`.
-  - In each stage, run `iters_per_stage` REINFORCE updates on the adversary weights using sampled train prompts and reward/verdict feedback.
-  - Optionally run a stage evaluation every `eval_every_stages` to track pre-evolution ASR/refusal metrics.
-  - At the end of each stage, run dual-role GEPA to update both text prompts: attacker instruction and defender system prompt.
-  - After all stages, run a final evaluation and persist full artifacts (metrics JSON, eval outputs, training log, attacker/defender GEPA traces, stage metrics, plots, and `run_manifest.json`).
+- Same staged layout and GEPA stages as v2; adversary policy updates use RLOO instead of REINFORCE. Shares `runs.coev_v2` defaults in config.
+
+### Legacy CoEV (`runs/coev_run.py`)
+
+- Older notebook-style CoEV (`reinforce` / `gepa` / `eval`). Not exposed by the unified runner; invoke `uv run runs/coev_run.py ...` directly.
 
 ### Adversary-only run (`runs/adversary_run.py`)
 
@@ -65,10 +64,10 @@ This is the expected pattern when inspecting `runs/`.
 
 ## 4) Compare and contrast
 
-- Shared: all four runs follow the same high-level phase ordering and use shared `src/` runtime/evaluation modules.
-- Adversary training: `adversary_run.py`, `coev_run.py`, and `coev_v2_run.py` run REINFORCE-style updates; `gepa_run.py` does not.
-- Prompt evolution: `gepa_run.py` and `coev_v2_run.py` use GEPA optimization; `coev_run.py` implements GEPA from scratch as per Shiv's code `legacy_code/legacy3/Copy_of_basic_implementation_without_gepa (4).ipynb`, using a lighter legacy GEPA stage path.
-- Reflection endpoint dependency: GEPA-based runs require an OpenAI-compatible reflection endpoint (`runtime.reflection`), commonly local vLLM.
+- Shared: active runs share the same phase ordering (`parse_args` → sessions → data → eval loops → artifacts) and `src/` runtime modules.
+- Adversary training: `adversary_run.py`, `coev_v2_run.py` (REINFORCE), `coev_v2_RLOO_run.py` (RLOO); `gepa_run.py` does not train an adversary.
+- Prompt evolution: `gepa_run.py`, `coev_v2_run.py`, and `coev_v2_RLOO_run.py` use the GEPA optimization path; legacy `coev_run.py` has its own older GEPA stage wiring.
+- Reflection: GEPA-capable runs need an OpenAI-compatible reflection endpoint (`runtime.reflection`), often local vLLM.
 
 ## 5) Quick start options
 
@@ -79,36 +78,22 @@ Choose one of these based on your environment and goal.
 Use `scripts/run_unified_experiment.py` when you want one consistent CLI.
 
 ```bash
-# GEPA
 uv run python scripts/run_unified_experiment.py --mode gepa
-
-# CoEV legacy
-uv run python scripts/run_unified_experiment.py --mode coev
-
-# CoEV v2
 uv run python scripts/run_unified_experiment.py --mode coev_v2
-
-# Adversary-only
+uv run python scripts/run_unified_experiment.py --mode coev_v2_rloo
 uv run python scripts/run_unified_experiment.py --mode adversary
 ```
 
-Edit `scripts.unified_runner` in `configs/default.yaml` for `coev_mode`, `coev_v2_mode`, `adversary_mode`, `run_kind`, output dirs, etc.
+Edit `scripts.unified_runner` in `configs/default.yaml` (or `PROMPT_OPT_CONFIG_PATH`) for `coev_v2_mode`, `coev_v2_rloo_mode`, `adversary_mode`, `run_kind`, result dirs, etc. CLI is only `--mode`.
 
 ### Option B: Prime/cluster launcher (recommended on Prime Intellect-style servers)
 
 Use `scripts/launch_unified_prime.sh` for setup + run in one command.
 
 ```bash
-# GEPA (starts reflection vLLM, then runs GEPA)
 MODE=gepa bash scripts/launch_unified_prime.sh
-
-# CoEV
-MODE=coev bash scripts/launch_unified_prime.sh
-
-# CoEV v2 (starts reflection vLLM)
 MODE=coev_v2 bash scripts/launch_unified_prime.sh
-
-# Adversary-only
+MODE=coev_v2_rloo bash scripts/launch_unified_prime.sh
 MODE=adversary bash scripts/launch_unified_prime.sh
 ```
 
@@ -118,30 +103,29 @@ Notes for Prime usage:
 
 - Ensure GPU drivers/CUDA stack are ready.
 - Ensure `HF_TOKEN` (or `HUGGINGFACE_HUB_TOKEN`) is exported for gated models/datasets.
-- For GEPA/CoEV v2, reflection endpoint defaults to local vLLM on `127.0.0.1:8001`.
+- For GEPA and staged CoEV v2 / v2 RLOO, reflection defaults to local vLLM on `127.0.0.1:8001`.
 
 ### Option C: Direct run scripts (best for focused debugging)
 
+Defaults come from YAML (`configs/default.yaml` unless overridden); add flags only when you need overrides.
+
 ```bash
-uv run runs/gepa_run.py --show-progress
-uv run runs/coev_run.py --mode reinforce
+uv run runs/gepa_run.py
 uv run runs/coev_v2_run.py --mode coev
+uv run runs/coev_v2_RLOO_run.py --mode coev
 uv run runs/adversary_run.py --mode train
+# Legacy only:
+# uv run runs/coev_run.py --mode reinforce
 ```
 
 ### Option D: Dedicated smoke launcher (no default config edits)
 
-Use `scripts/launch_smoke_prime.sh` when you want short-budget sanity checks for one mode or all four modes. It uses `configs/smoke.yaml` by default via `PROMPT_OPT_CONFIG_PATH`, so `configs/default.yaml` remains untouched.
+`scripts/launch_smoke_prime.sh` runs short-budget checks using `configs/smoke.yaml` (or `smoke_eval.yaml` when `RUN_KIND=eval`). `MODE=all` runs gepa, coev_v2, coev_v2_rloo, and adversary.
 
 ```bash
-# Run all four in minimal training mode
 bash scripts/launch_smoke_prime.sh
-
-# Run all four in eval-only mode
 RUN_KIND=eval bash scripts/launch_smoke_prime.sh
-
-# Run one mode only
-MODE=coev bash scripts/launch_smoke_prime.sh
+MODE=coev_v2_rloo bash scripts/launch_smoke_prime.sh
 ```
 
 ## 6) Running locally
@@ -161,17 +145,15 @@ uv sync
 ### Running
 
 ```bash
-# Inspect script options
-uv run runs/adversary_run.py --help
-uv run runs/coev_run.py --help
-uv run runs/coev_v2_run.py --help
 uv run runs/gepa_run.py --help
+uv run runs/coev_v2_run.py --help
+uv run runs/coev_v2_RLOO_run.py --help
+uv run runs/adversary_run.py --help
 
-# Typical runs
-uv run runs/adversary_run.py --mode train
-uv run runs/coev_run.py --mode reinforce
+uv run runs/gepa_run.py
 uv run runs/coev_v2_run.py --mode coev
-uv run runs/gepa_run.py --show-progress
+uv run runs/coev_v2_RLOO_run.py --mode coev
+uv run runs/adversary_run.py --mode train
 ```
 
 ### Notes on keys/endpoints
@@ -234,7 +216,7 @@ Legend:
 | `global.seed` | Easy swap | random seed integer | Used by all run scripts. |
 | `global.device` | Easy swap | `cuda`, `cpu`, or `null` for auto | Passed into runtime device resolution. |
 | `global.runtime_profile` | Partial/in progress | label string (for manifests/reporting) | Currently metadata/profile label, not a backend selector. |
-| `runtime.models.adversary_model_id` | Easy swap (within current backend) | Unsloth/HF model id or local path compatible with current Unsloth loader | Used by `coev`, `coev_v2`, and `adversary` runs. |
+| `runtime.models.adversary_model_id` | Easy swap (within current backend) | Unsloth/HF model id or local path compatible with current Unsloth loader | Used by `coev_v2`, `coev_v2_RLOO`, and `adversary` runs. |
 | `runtime.models.target_model_name` | Easy swap | Must match the model served at `runtime.reflection` for HTTP target runs | Same id as `reflection_model_name` by default; victim completions go through vLLM except vector steering. |
 | `runtime.models.reflection_model_name` | Easy swap | model id served by the OpenAI-compatible endpoint (`--served-model-name`) | GEPA reflection, CoEV v2, and **target** HTTP generation (shared server). |
 | `runtime.models.judge_model_id` | Partial/in progress | Intended: HarmBench judge model id | Documented in config, but current judge construction still uses runtime defaults in scripts. |
@@ -243,20 +225,19 @@ Legend:
 | `runtime.legacy_target_vllm.base_url` | Deprecated/legacy | N/A in current active runs | Kept for legacy compatibility docs; not wired in current pipelines. |
 | `runtime.legacy_target_vllm.api_key` | Deprecated/legacy | N/A in current active runs | Kept for legacy compatibility docs; not wired in current pipelines. |
 | `runs.gepa.*` | Easy swap | GEPA train/val size, budget, thresholds, prompt, result path | Active and wired in `runs/gepa_run.py`. |
-| `runs.coev.*` | Easy swap | CoEV modes, schedules, eval settings, prompt seeds, csv paths | Active and wired in `runs/coev_run.py`. |
-| `runs.coev_v2.*` | Easy swap | CoEV v2 schedules, GEPA budgets, token limits, prompt seeds, output names | Active and wired in `runs/coev_v2_run.py`. |
+| `runs.coev.*` | Easy swap | Legacy CoEV knobs | Only `runs/coev_run.py`. |
+| `runs.coev_v2.*` | Easy swap | CoEV v2 / RLOO schedules, GEPA budgets, token limits, prompt seeds, output names | `runs/coev_v2_run.py` and `runs/coev_v2_RLOO_run.py`. |
 | `runs.adversary.*` | Easy swap | adversary training schedule, eval settings, instruction/prompt, output names | Active and wired in `runs/adversary_run.py`. |
 | `runs.vector_steering_baseline.target_inference` | Easy swap | `local_hf` (required for steering) | Only `vector_steering_baseline` loads target weights locally; value must stay `local_hf`. |
-| `scripts.unified_runner.run_kind` | Easy swap | `train` or `eval` — `eval` forces coev / coev_v2 / adversary pipeline modes to eval | Read by `scripts/run_unified_experiment.py`. |
-| `scripts.unified_runner.coev_mode` | Easy swap | `reinforce`, `gepa`, or `eval` (CoEV legacy) | Same. |
-| `scripts.unified_runner.coev_v2_mode` | Easy swap | `coev` or `eval`; omit/`null` to infer from `coev_mode` | Same. |
-| `scripts.unified_runner.adversary_mode` | Easy swap | `train` or `eval` | Same. |
-| `scripts.unified_runner.gepa_show_progress` | Easy swap | progress bar for GEPA | Same. |
-| `scripts.unified_runner.save_dir` | Optional | adapter checkpoint root (passed as `--save-dir` when set) | Same. |
-| `scripts.unified_runner.gepa_results_dir` | Easy swap | default GEPA output root | Used by unified runner. |
-| `scripts.unified_runner.coev_results_dir` | Easy swap | default CoEV output root | Used by unified runner. |
-| `scripts.unified_runner.coev_v2_results_dir` | Easy swap | CoEV v2 output root | Used by unified runner. |
-| `scripts.unified_runner.adversary_results_dir` | Easy swap | default adversary output root | Used by unified runner. |
+| `scripts.unified_runner.run_kind` | Easy swap | `train` or `eval` — `eval` forces `coev_v2`, `coev_v2_rloo`, `adversary` sub-modes to eval | `scripts/run_unified_experiment.py`. |
+| `scripts.unified_runner.coev_v2_mode` | Easy swap | `coev` or `eval` | CoEV v2 script. |
+| `scripts.unified_runner.coev_v2_rloo_mode` | Easy swap | `coev` or `eval` | CoEV v2 RLOO script. |
+| `scripts.unified_runner.adversary_mode` | Easy swap | `train` or `eval` | Adversary script. |
+| `scripts.unified_runner.save_dir` | Optional | adapter checkpoint root (`--save-dir` when set) | CoEV v2, RLOO, adversary. |
+| `scripts.unified_runner.gepa_results_dir` | Easy swap | GEPA output root | Unified runner. |
+| `scripts.unified_runner.coev_v2_results_dir` | Easy swap | CoEV v2 output root | Unified runner. |
+| `scripts.unified_runner.coev_v2_rloo_results_dir` | Easy swap | CoEV v2 RLOO output root | Unified runner. |
+| `scripts.unified_runner.adversary_results_dir` | Easy swap | adversary output root | Unified runner. |
 | `scripts.unified_runner.runtime_profile` | Deprecated/legacy | N/A in current launcher logic | Present in config/docs but not used by `scripts/run_unified_experiment.py`. |
 
 ### 7.2 Practical interpretation
@@ -338,10 +319,10 @@ Legend:
 
 ### `scripts.unified_runner`
 
-- `run_kind`, `coev_mode`, `coev_v2_mode`, `adversary_mode`: orchestration for `scripts/run_unified_experiment.py` (CLI is only `--mode`).
-- `gepa_show_progress`, `save_dir` (optional).
-- `gepa_results_dir`, `coev_results_dir`, `coev_v2_results_dir`, `adversary_results_dir`: output roots for the unified runner.
-- `runtime_profile`: label for script profile metadata (legacy / docs).
+- `run_kind`, `coev_v2_mode`, `coev_v2_rloo_mode`, `adversary_mode`: train/eval orchestration for `scripts/run_unified_experiment.py` (CLI: `--mode` only).
+- Optional `save_dir`.
+- `gepa_results_dir`, `coev_v2_results_dir`, `coev_v2_rloo_results_dir`, `adversary_results_dir`: output roots.
+- `runtime_profile`: metadata label (legacy).
 
 ## 8) Common artifacts and why they matter
 
@@ -350,7 +331,7 @@ Most runs save a combination of:
 - `run_manifest.json`: canonical metadata record (mode, models, dataset, budget, extra fields).
 - metrics JSON: compact baseline/final metric summary for dashboards/comparisons.
 - CSV outputs: step-level logs, eval rows, optimization traces.
-- plots (GEPA/CoEV v2): quick visual checks of baseline vs optimized and optimization trajectory.
+- plots (GEPA / CoEV v2 / v2 RLOO): baseline vs optimized and optimization trajectory.
 - optional adapters (`--save-dir`): saved LoRA weights for trained adversary runs.
 
 How to use them:
@@ -377,15 +358,9 @@ How to use them:
 - optional adapter directory from `--save-dir`
 - note: CSV paths come from config and may be outside `--results-dir` if configured that way
 
-#### `runs/coev_v2_run.py`
+#### `runs/coev_v2_run.py` and `runs/coev_v2_RLOO_run.py`
 
-- run metadata JSON (`coev_v2_run_config.json`)
-- metrics JSON (`coev_v2_metrics.json`)
-- CSV bundle from `write_many_csv(...)` (baseline/optimized outputs, training log, traces, stage metrics)
-- baseline-vs-optimized bar plot
-- optimizer trajectory plot(s)
-- `run_manifest.json`
-- optional adapter directory from `--save-dir`
+- Same artifact shape: run config JSON, metrics JSON, CSV bundle (baseline/optimized, training log, traces, stage metrics), plots, `run_manifest.json`, optional `--save-dir` adapters.
 
 #### `runs/gepa_run.py`
 
@@ -407,10 +382,12 @@ Top-level responsibilities:
 
 Primary consumer scripts:
 
-- `runs/coev_run.py`
-- `runs/coev_v2_run.py`
 - `runs/gepa_run.py`
+- `runs/coev_v2_run.py`
+- `runs/coev_v2_RLOO_run.py`
 - `runs/adversary_run.py`
+
+(`runs/coev_run.py` is legacy.)
 
 Main modularity components:
 
@@ -439,7 +416,7 @@ Main modularity components:
    - `src/README.md` and/or `src/runtime/README.md` if internal APIs changed
 5. Run a short-budget smoke test before large Prime jobs.
 
-## 11) Streamlining opportunities across all four runs
+## 11) Streamlining opportunities across runs
 
 - Centralize baseline/final evaluation scaffolding into one helper returning `(metrics, rows)` with a consistent schema.
 - Standardize CSV column names across runs (for example `target_response` vs `target_resp`) for easier downstream analysis.
@@ -450,18 +427,15 @@ Main modularity components:
 ## 12) Minimal command cheat sheet
 
 ```bash
-# Install dependencies
 uv sync
 
-# Unified runner (edit scripts.unified_runner for sub-modes and paths)
 uv run python scripts/run_unified_experiment.py --mode gepa
-uv run python scripts/run_unified_experiment.py --mode coev
 uv run python scripts/run_unified_experiment.py --mode coev_v2
+uv run python scripts/run_unified_experiment.py --mode coev_v2_rloo
 uv run python scripts/run_unified_experiment.py --mode adversary
 
-# Prime launcher
 MODE=gepa bash scripts/launch_unified_prime.sh
-MODE=coev bash scripts/launch_unified_prime.sh
 MODE=coev_v2 bash scripts/launch_unified_prime.sh
+MODE=coev_v2_rloo bash scripts/launch_unified_prime.sh
 MODE=adversary bash scripts/launch_unified_prime.sh
 ```

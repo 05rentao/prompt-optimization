@@ -70,7 +70,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--steering-coefficient", type=float, default=run_defaults["steering_coefficient"])
     parser.add_argument("--max-new-tokens", type=int, default=run_defaults["max_new_tokens"])
     parser.add_argument("--temperature", type=float, default=run_defaults["temperature"])
-    parser.add_argument("--show-progress", action="store_true")
 
     parser.add_argument("--results-dir", default=run_defaults["results_dir"])
     parser.add_argument("--vector-dir", default=run_defaults["vector_dir"])
@@ -142,10 +141,9 @@ def evaluate_steered_model(
     device: str,
     max_new_tokens: int,
     temperature: float,
-    show_progress: bool,
 ) -> tuple[dict[str, float], pd.DataFrame]:
     """Generate responses on val set, judge jailbreaks, and aggregate metrics."""
-    iterator = tqdm(examples, desc="Evaluating steered model", disable=not show_progress)
+    iterator = tqdm(examples, desc="Evaluating steered model")
     rows: list[dict[str, Any]] = []
     behaviors: list[str] = []
     generations: list[str] = []
@@ -349,7 +347,6 @@ def main() -> None:
             device=device,
             max_new_tokens=args.max_new_tokens,
             temperature=args.temperature,
-            show_progress=args.show_progress,
         )
     finally:
         steerer.remove()

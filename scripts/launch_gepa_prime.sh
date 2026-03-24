@@ -31,7 +31,6 @@ REFLECTION_MAX_MODEL_LEN="${REFLECTION_MAX_MODEL_LEN:-8192}"
 # Second vLLM on TASK_PORT is optional (legacy / A/B); normal runs use a single server.
 START_TASK_VLLM="${START_TASK_VLLM:-0}"
 
-SHOW_PROGRESS="${SHOW_PROGRESS:-1}"
 KEEP_VLLM_UP="${KEEP_VLLM_UP:-0}"
 
 mkdir -p logs results outputs data
@@ -130,9 +129,6 @@ echo "REFLECTION_VLLM_BASE_URL=${REFLECTION_VLLM_BASE_URL}"
 echo "Launching runs/gepa_run.py..."
 RUN_CMD=(uv run python runs/gepa_run.py)
 
-if [[ "${SHOW_PROGRESS}" == "1" ]]; then
-  RUN_CMD+=(--show-progress)
-fi
 if [[ -n "${RESULTS_DIR:-}" ]]; then
   RUN_CMD+=(--results-dir "${RESULTS_DIR}")
 fi

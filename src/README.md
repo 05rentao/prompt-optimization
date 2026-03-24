@@ -74,7 +74,7 @@ uv run scripts/run_unified_experiment.py --mode coev
 uv run scripts/run_unified_experiment.py --mode coev_v2
 
 # Direct script runs (when developing one pipeline):
-uv run runs/gepa_run.py --show-progress
+uv run runs/gepa_run.py
 uv run runs/coev_run.py --mode reinforce
 uv run runs/coev_v2_run.py --mode coev
 uv run runs/adversary_run.py --mode train

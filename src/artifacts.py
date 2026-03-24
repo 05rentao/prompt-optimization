@@ -88,6 +88,125 @@ def save_baseline_optimized_plot(
     return out_path
 
 
+def save_gepa_asr_vs_evaluator_calls_plot(
+    trace_df: pd.DataFrame,
+    out_path: Path,
+    title: str,
+    *,
+    score_col: str = "score",
+) -> Path | None:
+    """Plot ASR vs evaluator call index from GEPA trace (standalone: score is refusal rate)."""
+    if trace_df.empty or score_col not in trace_df.columns:
+        return None
+    frame = trace_df.reset_index(drop=True).copy()
+    frame["call_index"] = frame.index + 1
+    frame["asr"] = (1.0 - pd.to_numeric(frame[score_col], errors="coerce")).clip(0.0, 1.0)
+    frame["best_asr_so_far"] = frame["asr"].cummax()
+    plt.figure(figsize=(10, 5))
+    sns.lineplot(data=frame, x="call_index", y="asr", label="per-call ASR", alpha=0.65)
+    sns.lineplot(data=frame, x="call_index", y="best_asr_so_far", label="best ASR so far", color="black")
+    plt.ylim(0, 1)
+    plt.title(title)
+    plt.xlabel("Evaluator call")
+    plt.ylabel("ASR")
+    plt.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_path, dpi=180)
+    plt.close()
+    return out_path
+
+
+def save_adversary_asr_vs_iterations_plot(
+    training_df: pd.DataFrame,
+    out_path: Path,
+    title: str,
+    *,
+    final_asr: float | None = None,
+    iterations: int | None = None,
+) -> Path | None:
+    """Plot periodic eval ASR vs training iteration from adversary_training_log (sparse eval_asr)."""
+    if training_df.empty:
+        return None
+    if "eval_asr" not in training_df.columns or "iteration" not in training_df.columns:
+        return None
+    frame = training_df.copy()
+    frame["eval_asr_num"] = pd.to_numeric(frame["eval_asr"], errors="coerce")
+    pts = frame.dropna(subset=["eval_asr_num"])
+    if pts.empty and final_asr is None:
+        return None
+
+    plt.figure(figsize=(10, 5))
+    if not pts.empty:
+        sns.lineplot(data=pts, x="iteration", y="eval_asr_num", marker="o", label="periodic eval")
+    if final_asr is not None and iterations is not None and iterations > 0:
+        plt.scatter(
+            [iterations],
+            [final_asr],
+            color="tab:red",
+            s=80,
+            zorder=5,
+            label="final eval",
+        )
+    plt.ylim(0, 1)
+    plt.title(title)
+    plt.xlabel("Training iteration")
+    plt.ylabel("ASR")
+    plt.legend(loc="best")
+    plt.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_path, dpi=180)
+    plt.close()
+    return out_path
+
+
+def save_coev_asr_vs_global_step_plot(
+    stage_metrics_df: pd.DataFrame,
+    iters_per_stage: int,
+    out_path: Path,
+    title: str,
+) -> Path | None:
+    """Plot ASR at CoEV checkpoints vs global REINFORCE step (end-of-stage + post-GEPA evals)."""
+    if stage_metrics_df.empty or "stage" not in stage_metrics_df.columns:
+        return None
+    if "phase" not in stage_metrics_df.columns or "asr" not in stage_metrics_df.columns:
+        return None
+
+    phases = ("pre_evolution", "attacker_gepa_best", "defender_gepa_best")
+    sub = stage_metrics_df[stage_metrics_df["phase"].isin(phases)].copy()
+    sub["asr"] = pd.to_numeric(sub["asr"], errors="coerce")
+    sub = sub.dropna(subset=["asr"])
+    if sub.empty:
+        return None
+
+    ips = max(1, int(iters_per_stage))
+
+    def _x_for_row(row: pd.Series) -> float:
+        st = int(row["stage"])
+        ph = str(row["phase"])
+        base = (st + 1) * ips
+        if ph == "pre_evolution":
+            return float(base)
+        if ph == "attacker_gepa_best":
+            return float(base) + 0.33
+        if ph == "defender_gepa_best":
+            return float(base) + 0.66
+        return float(base)
+
+    sub["global_step"] = sub.apply(_x_for_row, axis=1)
+
+    plt.figure(figsize=(10, 5))
+    sns.lineplot(data=sub, x="global_step", y="asr", hue="phase", marker="o")
+    plt.ylim(0, 1)
+    plt.title(title)
+    plt.xlabel("Global training step (end of stage bundle + offset for GEPA evals)")
+    plt.ylabel("ASR")
+    plt.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_path, dpi=180)
+    plt.close()
+    return out_path
+
+
 def save_trajectory_plot(
     trace_df: pd.DataFrame,
     out_path: Path,

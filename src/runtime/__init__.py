@@ -30,6 +30,7 @@ from .gepa_prompt_optimization import (
     run_gepa_prompt_optimization,
 )
 from .interfaces import GenerationRequest, GenerationSession, JudgeRuntime, LoRABridge, ReflectionGateway, TargetRuntime
+from .timed_target import cap_thread_workers, run_target_requests_ordered, timed_target_generate
 
 __all__ = [
     "GenerationRequest",
@@ -67,5 +68,8 @@ __all__ = [
     "resolve_reflection_env_overrides",
     "resolve_hf_token",
     "scoped_env",
+    "timed_target_generate",
+    "cap_thread_workers",
+    "run_target_requests_ordered",
 ]
 

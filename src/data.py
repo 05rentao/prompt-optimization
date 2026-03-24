@@ -86,16 +86,3 @@ def build_gepa_prompt_dataset(
     if not val:
         val = train[: min(max(min_val_examples, 1), len(train))]
     return train, val
-
-
-def to_gepa_train_val(
-    prompts: list[str],
-    train_ratio: float = 0.7,
-    min_val_examples: int = 1,
-) -> tuple[list[GepaExampleRow], list[GepaExampleRow]]:
-    """Adapter utility that converts prompt list to GEPA train/val examples."""
-    return build_gepa_prompt_dataset(
-        prompts=prompts,
-        train_ratio=train_ratio,
-        min_val_examples=min_val_examples,
-    )

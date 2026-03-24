@@ -8,13 +8,14 @@ export PYTHONPATH="${PYTHONPATH:-}:."
 # All experiment settings: configs/default.yaml or PROMPT_OPT_CONFIG_PATH (see scripts.unified_runner).
 # Shell only sets MODE and vLLM / infra below.
 #
-# Modes:
-#   - gepa:      GEPA prompt optimization
-#   - coev:      CoEV reinforce/gepa/eval (target via same vLLM)
-#   - coev_v2:   CoEV v2 + dual-role GEPA
-#   - adversary: adversary-only training (target via same vLLM)
+# Modes (scripts/run_unified_experiment.py --mode → runs/*.py):
+#   - gepa:           GEPA prompt optimization (runs/gepa_run.py)
+#   - coev_v2:        CoEV v2 REINFORCE + dual-role GEPA (runs/coev_v2_run.py)
+#   - coev_v2_rloo:   CoEV v2 RLOO + dual-role GEPA (runs/coev_v2_RLOO_run.py)
+#   - adversary:      adversary-only training (runs/adversary_run.py)
+#   (runs/coev_run.py is not wired here.)
 
-MODE="${MODE:-gepa}"                         # gepa | coev | coev_v2 | adversary
+MODE="${MODE:-gepa}"                         # gepa | coev_v2 | coev_v2_rloo | adversary
 
 REFLECTION_PORT="${REFLECTION_PORT:-8001}"
 
@@ -64,8 +65,8 @@ wait_for_port() {
   echo "${name} is up on :${port}"
 }
 
-if [[ "${MODE}" != "gepa" && "${MODE}" != "coev_v2" && "${MODE}" != "coev" && "${MODE}" != "adversary" ]]; then
-  echo "Unsupported MODE=${MODE}. Expected one of: gepa, coev, coev_v2, adversary"
+if [[ "${MODE}" != "gepa" && "${MODE}" != "coev_v2" && "${MODE}" != "coev_v2_rloo" && "${MODE}" != "adversary" ]]; then
+  echo "Unsupported MODE=${MODE}. Expected one of: gepa, coev_v2, coev_v2_rloo, adversary"
   exit 1
 fi
 

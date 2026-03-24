@@ -6,14 +6,14 @@ set -euo pipefail
 # Examples:
 #   bash scripts/launch_smoke_prime.sh
 #   RUN_KIND=eval bash scripts/launch_smoke_prime.sh
-#   MODE=coev bash scripts/launch_smoke_prime.sh
+#   MODE=coev_v2_rloo bash scripts/launch_smoke_prime.sh
 #
-# Edit scripts.unified_runner in the YAML for coev_mode, run_kind, etc.
+# Edit scripts.unified_runner in the YAML for coev_v2_mode, run_kind, etc.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
-MODE="${MODE:-all}"            # all | gepa | coev | coev_v2 | adversary
+MODE="${MODE:-all}"            # all | gepa | coev_v2 | coev_v2_rloo | adversary
 RUN_KIND="${RUN_KIND:-train}"  # train | eval — selects smoke.yaml vs smoke_eval.yaml
 RUN_TAG="${RUN_TAG:-$(date +%Y%m%d_%H%M%S)}"
 
@@ -38,11 +38,11 @@ run_one() {
     gepa)
       MODE=gepa bash scripts/launch_unified_prime.sh
       ;;
-    coev)
-      MODE=coev bash scripts/launch_unified_prime.sh
-      ;;
     coev_v2)
       MODE=coev_v2 bash scripts/launch_unified_prime.sh
+      ;;
+    coev_v2_rloo)
+      MODE=coev_v2_rloo bash scripts/launch_unified_prime.sh
       ;;
     adversary)
       MODE=adversary bash scripts/launch_unified_prime.sh
@@ -57,15 +57,15 @@ run_one() {
 case "${MODE}" in
   all)
     run_one gepa
-    run_one coev
     run_one coev_v2
+    run_one coev_v2_rloo
     run_one adversary
     ;;
-  gepa|coev|coev_v2|adversary)
+  gepa|coev_v2|coev_v2_rloo|adversary)
     run_one "${MODE}"
     ;;
   *)
-    echo "ERROR: MODE must be one of: all, gepa, coev, coev_v2, adversary"
+    echo "ERROR: MODE must be one of: all, gepa, coev_v2, coev_v2_rloo, adversary"
     exit 1
     ;;
 esac

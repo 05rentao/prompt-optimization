@@ -9,7 +9,7 @@ from typing import Any, Callable
 import gepa.optimize_anything as oa
 from gepa.optimize_anything import EngineConfig, GEPAConfig, ReflectionConfig, optimize_anything
 
-from src.data import to_gepa_train_val
+from src.data import build_gepa_prompt_dataset
 from src.data import harmbench_to_gepa_examples
 from src.evaluators import compute_refusal_score, is_yes_verdict
 
@@ -75,20 +75,6 @@ class DualRoleGepaOptimizationResult:
     attacker_trace: list[dict[str, Any]]
     defender_trace: list[dict[str, Any]]
     run_seconds: float
-
-
-def build_gepa_prompt_dataset(
-    prompts: list[str],
-    train_ratio: float = 0.7,
-    min_val_examples: int = 1,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Build GEPA train/val dataset pairs from prompt strings."""
-    return to_gepa_train_val(
-        prompts=prompts,
-        train_ratio=train_ratio,
-        min_val_examples=min_val_examples,
-    )
-
 
 def _policy_sample(
     adversary_session: GenerationSession,
@@ -372,6 +358,7 @@ def run_dual_role_gepa_prompt_optimization(
         min_val_examples=cfg.min_val_examples,
     )
     if not train_set:
+        print("not trainset, returning")
         return DualRoleGepaOptimizationResult(
             attacker_instruction=attacker_instruction,
             defense_prompt=defense_prompt,

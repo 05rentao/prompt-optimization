@@ -124,12 +124,11 @@ scripts:
   unified_runner:
     runtime_profile: "smoke"
     run_kind: eval
-    coev_mode: reinforce
     coev_v2_mode: coev
+    coev_v2_rloo_mode: coev
     adversary_mode: train
-    gepa_show_progress: true
     save_dir: null
     gepa_results_dir: "results/smoke/gepa"
-    coev_results_dir: "results/smoke/coev"
     coev_v2_results_dir: "results/smoke/coev_v2"
+    coev_v2_rloo_results_dir: "results/smoke/coev_v2_rloo"
     adversary_results_dir: "results/smoke/adversary"

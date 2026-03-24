@@ -12,7 +12,6 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
 DEVICE="${DEVICE:-}"
-SHOW_PROGRESS="${SHOW_PROGRESS:-1}"
 
 mkdir -p logs results outputs data
 
@@ -41,9 +40,6 @@ if [[ -n "${RESULTS_DIR:-}" ]]; then
 fi
 if [[ -n "${VECTOR_DIR:-}" ]]; then
   RUN_CMD+=(--vector-dir "${VECTOR_DIR}")
-fi
-if [[ "${SHOW_PROGRESS}" == "1" ]]; then
-  RUN_CMD+=(--show-progress)
 fi
 
 "${RUN_CMD[@]}"
