@@ -13,7 +13,6 @@ Target generation uses the same OpenAI-compatible vLLM server as GEPA reflection
 
 from __future__ import annotations
 
-import unsloth  # noqa: F401 — must import before transformers for Unsloth patches
 
 import argparse
 import random

@@ -1,4 +1,4 @@
-"""Unsloth adversary runtime with LoRA-capable policy sampling."""
+"""Adversary runtime with LoRA-capable policy sampling (standard transformers+peft, no unsloth)."""
 
 from __future__ import annotations
 
@@ -6,37 +6,48 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from unsloth import FastLanguageModel
 import torch
 import torch.nn.functional as f
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+from peft import get_peft_model, LoraConfig, TaskType
 
 from .config import UnslothAdversaryConfig
 from .interfaces import LoRABridge
 
+
 class UnslothAdversaryRuntime(LoRABridge):
-    """Wraps an Unsloth PEFT model and exposes sampling/save helpers."""
+    """Wraps a PEFT LoRA model and exposes sampling/save helpers."""
     _sample_lock = threading.Lock()
 
     def __init__(self, cfg: UnslothAdversaryConfig) -> None:
         """Load base model and attach LoRA adapters."""
-        model, tokenizer = FastLanguageModel.from_pretrained(
-            model_name=cfg.model_id,
-            max_seq_length=cfg.max_seq_length,
+        bnb_config = BitsAndBytesConfig(
             load_in_4bit=cfg.load_in_4bit,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.bfloat16,
+        ) if cfg.load_in_4bit else None
+
+        base_model = AutoModelForCausalLM.from_pretrained(
+            cfg.model_id,
+            quantization_config=bnb_config,
+            device_map="auto",
+            torch_dtype=torch.bfloat16,
         )
-        self.model = FastLanguageModel.get_peft_model(
-            model,
+        base_model.config.use_cache = False
+
+        lora_config = LoraConfig(
             r=cfg.lora_r,
-            target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
             lora_alpha=cfg.lora_alpha,
+            target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
             lora_dropout=cfg.lora_dropout,
             bias="none",
-            use_gradient_checkpointing="unsloth",
+            task_type=TaskType.CAUSAL_LM,
         )
-        # Ensure Unsloth inference buffers are initialized for generate().
-        FastLanguageModel.for_inference(self.model)
+        self.model = get_peft_model(base_model, lora_config)
         self.model.eval()
-        self.tokenizer = tokenizer
+        self.tokenizer = AutoTokenizer.from_pretrained(cfg.model_id)
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
 
     def __getattr__(self, name: str) -> Any:
         """Delegate nn.Module attributes to underlying PEFT model."""
@@ -59,34 +70,16 @@ class UnslothAdversaryRuntime(LoRABridge):
         prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         enc = self.tokenizer(prompt, return_tensors="pt", truncation=True, max_length=max_length).to(device)
         with self._sample_lock:
-            # Unsloth mutates module-local temp buffers during fast generate.
-            # Serializing this path avoids cross-thread buffer races.
             self.model.eval()
-            FastLanguageModel.for_inference(self.model)
             with torch.no_grad():
-                try:
-                    gen_ids = self.model.generate(
-                        **enc,
-                        max_new_tokens=max_new_tokens,
-                        do_sample=True,
-                        temperature=temperature,
-                        top_p=top_p,
-                        use_cache=True,
-                    )
-                except AttributeError as exc:
-                    # Rarely, temp buffers can still be absent after training-mode flips.
-                    if "temp_QA" in str(exc):
-                        FastLanguageModel.for_inference(self.model)
-                        gen_ids = self.model.generate(
-                            **enc,
-                            max_new_tokens=max_new_tokens,
-                            do_sample=True,
-                            temperature=temperature,
-                            top_p=top_p,
-                            use_cache=True,
-                        )
-                    else:
-                        raise
+                gen_ids = self.model.generate(
+                    **enc,
+                    max_new_tokens=max_new_tokens,
+                    do_sample=True,
+                    temperature=temperature,
+                    top_p=top_p,
+                    use_cache=True,
+                )
                 prompt_len = enc["input_ids"].shape[-1]
                 completion_ids = gen_ids[:, prompt_len:]
 
@@ -113,4 +106,3 @@ class UnslothAdversaryRuntime(LoRABridge):
         save_dir.mkdir(parents=True, exist_ok=True)
         self.model.save_pretrained(str(save_dir))
         self.tokenizer.save_pretrained(str(save_dir))
-

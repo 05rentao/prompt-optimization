@@ -13,9 +13,6 @@ Target generation uses the OpenAI-compatible vLLM endpoint from ``configs/defaul
 
 from __future__ import annotations
 
-import unsloth
-from unsloth import FastLanguageModel
-
 import argparse
 import re
 import time

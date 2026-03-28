@@ -8,7 +8,6 @@ similar to `src/runtime/gepa_prompt_optimization.py`.
 
 from __future__ import annotations
 
-import unsloth  # noqa: F401 — must import before transformers for Unsloth patches
 
 import argparse
 import time
