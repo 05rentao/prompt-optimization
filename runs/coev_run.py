@@ -47,7 +47,7 @@ from src.runtime import (
     evaluate_outputs,
     resolve_hf_token,
 )
-from src.runtime.defaults import build_config_snapshot, load_default_config
+from src.runtime.defaults import build_config_snapshot, load_default_config, merged_run_defaults
 from src.types import RunManifest
 
 DEFAULT_REWRITER_INSTRUCTION = (
@@ -572,7 +572,7 @@ def parse_args() -> argparse.Namespace:
     """Parse CLI arguments for CoEV/REINFORCE experiment modes."""
     defaults = load_default_config()
     global_defaults = defaults["global"]
-    run_defaults = defaults["runs"]["coev"]
+    run_defaults = merged_run_defaults(defaults, "coev")
     parser = argparse.ArgumentParser(description="Refactored GEPA/REINFORCE training pipeline.")
     parser.add_argument("--mode", choices=["reinforce", "gepa", "eval"], default="reinforce")
     parser.add_argument("--device", default=global_defaults["device"], help="Device override (e.g. cuda, cpu).")
@@ -603,7 +603,7 @@ def main() -> None:
     defaults = load_default_config()
     global_defaults = defaults["global"]
     model_defaults = defaults["runtime"]["models"]
-    run_defaults = defaults["runs"]["coev"]
+    run_defaults = merged_run_defaults(defaults, "coev")
     runtime_profile = global_defaults["runtime_profile"]
 
     # Phase 2: resolve device + evaluation config.

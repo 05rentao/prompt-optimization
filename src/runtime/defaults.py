@@ -2,12 +2,34 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+# Keys filled from ``global.model_defaults`` when absent under ``runs.<name>``.
+_MODEL_DEFAULT_KEYS: tuple[str, ...] = (
+    "temperature",
+    "baseline_system_prompt",
+    "target_system_prompt",
+    "seed_prompt",
+    "initial_defense_prompt",
+    "initial_attacker_instruction",
+    "attacker_instruction",
+    "eval_instruction",
+    "max_new_tokens",
+    "max_tokens",
+    "gepa_max_tokens",
+    "gepa_temperature",
+)
+
+_COEV_NESTED_INITIAL_KEYS: tuple[str, ...] = (
+    "initial_attacker_instruction",
+    "initial_defense_prompt",
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _DEFAULT_CONFIG_PATH = _REPO_ROOT / "configs" / "default.yaml"
@@ -21,7 +43,7 @@ def resolve_config_path(path: Path | None = None) -> Path:
 
 
 def load_default_config(path: Path | None = None) -> dict[str, Any]:
-    """Load repository default config YAML into a dictionary."""
+    """Load config YAML into a dictionary (raw ``runs.*``; use :func:`merged_run_defaults` for model prompts/temps)."""
     config_path = resolve_config_path(path)
     payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     if payload is None:
@@ -29,6 +51,48 @@ def load_default_config(path: Path | None = None) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError(f"Config file must decode to a mapping: {config_path}")
     return payload
+
+
+def merged_run_defaults(defaults: dict[str, Any], run_key: str) -> dict[str, Any]:
+    """Merge ``global.model_defaults`` into ``runs.<run_key>`` (per-run block wins).
+
+    Shared prompts, sampling temperature, and token limits live in ``global.model_defaults``;
+    iteration counts, learning rates, paths, and other run-specific knobs stay under ``runs.*``.
+
+    For ``runs.coev``, the ``gepa`` sub-mapping receives ``initial_*`` defaults when omitted there
+    (the ``reinforce`` block does not take those keys).
+
+    ``seed_prompt`` defaults to ``target_system_prompt`` when unset.
+    ``gepa_temperature`` defaults to ``temperature`` when unset (after merge).
+    """
+    global_block = defaults.get("global")
+    md: dict[str, Any] = {}
+    if isinstance(global_block, dict):
+        raw_md = global_block.get("model_defaults")
+        if isinstance(raw_md, dict):
+            md = raw_md
+    runs = defaults.get("runs")
+    if not isinstance(runs, dict) or run_key not in runs:
+        raise KeyError(f"runs.{run_key} not found in config")
+    run_raw = runs[run_key]
+    if not isinstance(run_raw, dict):
+        raise TypeError(f"runs.{run_key} must be a mapping")
+    out = copy.deepcopy(run_raw)
+    for k in _MODEL_DEFAULT_KEYS:
+        if k in md and k not in out:
+            out[k] = md[k]
+    if run_key == "coev":
+        # Only ``gepa`` uses ``initial_*`` (``reinforce`` ReinforceConfig has no such fields).
+        sub = "gepa"
+        if sub in out and isinstance(out[sub], dict):
+            for k in _COEV_NESTED_INITIAL_KEYS:
+                if k in md and k not in out[sub]:
+                    out[sub][k] = md[k]
+    if "seed_prompt" not in out and "target_system_prompt" in out:
+        out["seed_prompt"] = out["target_system_prompt"]
+    if "gepa_temperature" not in out and "temperature" in out:
+        out["gepa_temperature"] = out["temperature"]
+    return out
 
 
 def build_config_snapshot(

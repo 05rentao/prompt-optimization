@@ -59,7 +59,7 @@ from src.runtime import (
     resolve_reflection_env_overrides,
     timed_target_generate,
 )
-from src.runtime.defaults import build_config_snapshot, load_default_config
+from src.runtime.defaults import build_config_snapshot, load_default_config, merged_run_defaults
 from src.types import RunManifest
 
 
@@ -432,7 +432,7 @@ def save_artifacts(
     plot_path = save_baseline_optimized_plot(
         comparison_df=comparison_df,
         out_path=results_dir / "plot_eval_metrics_before_vs_after_training.png",
-        title="Adversary eval: before vs after training",
+        title="Adversary eval: LoRA before vs after RLOO",
         subtitle=(
             "Same fixed rewriter instruction and target system prompt. "
             "before_training = adversary LoRA at init; after_training = same LoRA after RLOO. "
@@ -506,7 +506,7 @@ def save_artifacts(
 def parse_args(defaults: dict[str, Any]) -> argparse.Namespace:
     """Parse CLI flags for adversary-only fine-tuning and evaluation."""
     global_defaults = defaults["global"]
-    run_defaults = defaults["runs"]["adversary"]
+    run_defaults = merged_run_defaults(defaults, "adversary")
     parser = argparse.ArgumentParser(description="Run adversary-only fine-tuning (no prompt optimization).")
     parser.add_argument("--mode", choices=["train", "eval"], default="train")
     parser.add_argument("--device", default=global_defaults["device"], help="Device override (e.g. cuda, cpu).")
@@ -584,7 +584,7 @@ def main() -> None:
     args = parse_args(defaults)
     _patch_args_from_yaml(args, defaults)
     sns.set_theme(style="whitegrid")
-    run_defaults = defaults["runs"]["adversary"]
+    run_defaults = merged_run_defaults(defaults, "adversary")
 
     train_cfg = AdversaryTrainingConfig(
         iterations=run_defaults["iterations"],

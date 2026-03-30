@@ -62,7 +62,7 @@ from src.runtime import (
     resolve_reflection_env_overrides,
     timed_target_generate,
 )
-from src.runtime.defaults import build_config_snapshot, load_default_config
+from src.runtime.defaults import build_config_snapshot, load_default_config, merged_run_defaults
 from src.runtime.openai_reflection_gateway import OpenAIReflectionGateway
 from src.runtime.gepa_prompt_optimization import (
     DualRoleGepaContext,
@@ -508,7 +508,7 @@ def save_artifacts(
 def parse_args(defaults: dict[str, Any]) -> argparse.Namespace:
     """Parse CLI arguments for CoEV v2 training/evaluation."""
     global_defaults = defaults["global"]
-    run_defaults = defaults["runs"]["coev_v2"]
+    run_defaults = merged_run_defaults(defaults, "coev_v2")
 
     parser = argparse.ArgumentParser(description="Run CoEV v2 (REINFORCE + GEPA prompt evolution).")
     parser.add_argument("--mode", choices=["coev", "eval"], default="coev")

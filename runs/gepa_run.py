@@ -56,7 +56,7 @@ from src.runtime import (
     resolve_hf_token,
     timed_target_generate,
 )
-from src.runtime.defaults import build_config_snapshot, load_default_config
+from src.runtime.defaults import build_config_snapshot, load_default_config, merged_run_defaults
 from src.runtime.openai_reflection_gateway import OpenAIReflectionGateway
 from src.types import RunManifest
 
@@ -183,7 +183,7 @@ def _eval_suite(
 def parse_args(defaults: dict[str, Any]) -> argparse.Namespace:
     """Parse CLI arguments for the GEPA optimization pipeline."""
     global_defaults = defaults["global"]
-    run_defaults = defaults["runs"]["gepa"]
+    run_defaults = merged_run_defaults(defaults, "gepa")
     parser = argparse.ArgumentParser(description="Run GEPA optimization for HarmBench safety prompt tuning.")
     parser.add_argument("--dataset-name", default=global_defaults["dataset_name"])
     parser.add_argument("--dataset-config", default=global_defaults["dataset_config"])

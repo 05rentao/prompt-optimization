@@ -33,7 +33,7 @@ from src.runtime import (
     build_local_hf_target_session,
     resolve_hf_token,
 )
-from src.runtime.defaults import build_config_snapshot, load_default_config
+from src.runtime.defaults import build_config_snapshot, load_default_config, merged_run_defaults
 from src.steering_methods.activation_add import ActivationAddition, extract_steering_vectors
 from src.types import RunManifest
 
@@ -50,7 +50,7 @@ def parse_args() -> argparse.Namespace:
     defaults = load_default_config()
     global_defaults = defaults["global"]
     model_defaults = defaults["runtime"]["models"]
-    run_defaults = defaults["runs"]["vector_steering_baseline"]
+    run_defaults = merged_run_defaults(defaults, "vector_steering_baseline")
 
     parser = argparse.ArgumentParser(description="Run activation-addition vector steering baseline on HarmBench.")
     parser.add_argument("--dataset-name", default=global_defaults["dataset_name"])

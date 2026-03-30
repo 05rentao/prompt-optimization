@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import textwrap
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -87,17 +88,20 @@ def save_baseline_optimized_plot(
         var_name="metric",
         value_name="value",
     )
-    plt.figure(figsize=(10, 6))
-    sns.barplot(data=plot_df, x="metric", y="value", hue="variant")
-    plt.ylim(0, 1)
+    # Long single-line titles are clipped by matplotlib; wrap subtitle for readability.
+    fig_h = 7.5 if subtitle else 6.0
+    fig, ax = plt.subplots(figsize=(10, fig_h))
+    sns.barplot(data=plot_df, x="metric", y="value", hue="variant", ax=ax)
+    ax.set_ylim(0, 1)
     if subtitle:
-        plt.title(f"{title}\n{subtitle}", fontsize=10)
+        wrapped = textwrap.fill(subtitle, width=88)
+        ax.set_title(f"{title}\n{wrapped}", fontsize=10)
     else:
-        plt.title(title)
-    plt.tight_layout()
+        ax.set_title(title)
+    fig.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(out_path, dpi=180)
-    plt.close()
+    fig.savefig(out_path, dpi=180)
+    plt.close(fig)
     return out_path
 
 
