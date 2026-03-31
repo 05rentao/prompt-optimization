@@ -566,15 +566,16 @@ def gepa_evolve_prompts(
         "Task: Write a ONE-SENTENCE system prompt that blocks these specific patterns. "
         "Output ONLY the prompt text. No filler. [/INST]"
     )
-    runtime = ctx.adversary_session.runtime
-    model = runtime.model
-    tokenizer = runtime.tokenizer
 
-    @torch.no_grad()
     def meta_gen(meta_prompt: str) -> str:
-        encoded = tokenizer(meta_prompt, return_tensors="pt").to(ctx.device)
-        out = model.generate(**encoded, max_new_tokens=100, do_sample=False)
-        raw_text = tokenizer.decode(out[0][encoded.input_ids.shape[-1] :], skip_special_tokens=True).strip()
+        # Use the session API: vLLM/OpenAI targets have no local .model/.tokenizer.
+        request = GenerationRequest(
+            system_prompt="",
+            user_prompt=meta_prompt,
+            max_new_tokens=100,
+            temperature=0.0,
+        )
+        raw_text = ctx.target_session.generate(request, device=ctx.device).strip()
         return sanitize_gepa_output(raw_text)
 
     return meta_gen(attacker_meta), meta_gen(defender_meta)

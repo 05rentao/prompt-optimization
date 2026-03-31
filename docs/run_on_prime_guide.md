@@ -104,7 +104,6 @@ PY
 #### 4.1 Add SSH host entry on your local machine
 
 ```bash
-mkdir -p ~/.ssh
 nano ~/.ssh/config
 ```
 
@@ -113,8 +112,8 @@ Paste:
 ```text
 Host prime-pod
     HostName <SSH_IP_ADDRESS>
-    User root
-    Port 22
+    User <the string before the @ symbol in the ssh>
+    Port <differnt port number if applicable, usually 22>
     IdentityFile ~/.ssh/id_ed25519
     ServerAliveInterval 30
     ServerAliveCountMax 120
@@ -123,7 +122,10 @@ Host prime-pod
 #### 4.2 Create a key if needed, then copy your public key (local machine)
 
 ```bash
+# (optional) create key
 test -f ~/.ssh/id_ed25519 || ssh-keygen -t ed25519 -C "prime-access"
+
+# print key to terminal, copy this!
 cat ~/.ssh/id_ed25519.pub
 ```
 
@@ -134,11 +136,10 @@ In the terminal already connected to Prime:
 ```bash
 mkdir -p ~/.ssh
 chmod 700 ~/.ssh
-echo "PASTE_YOUR_PUBLIC_KEY_STRING_HERE" >> ~/.ssh/authorized_keys
+echo "<PASTE_YOUR_PUBLIC_KEY_STRING_HERE>" >> ~/.ssh/authorized_keys
 chmod 600 ~/.ssh/authorized_keys
 ```
-
-Then test from your local machine:
+Test from your local machine:
 
 ```bash
 ssh prime-pod
@@ -159,9 +160,7 @@ You can terminate from the Prime dashboard, or by CLI:
 ```bash
 prime pods status <Pod_ID>
 
-# Use whichever command your prime CLI version supports:
-prime pods delete <Pod_ID>
-# or
+# delete the prime dashboard.
 prime pods terminate <Pod_ID>
 ```
 

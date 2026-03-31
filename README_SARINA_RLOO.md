@@ -117,13 +117,13 @@ python runs/coev_run.py --mode gepa --adversary-prompt default
 
 ```bash
 # XSTest (overrefusal measurement)
-python scripts/run_benchmark.py \
+uv run python scripts/run_benchmark.py \
   --benchmark xstest \
   --xstest-limit 100 \
   --output-dir results/xstest_latest
 
 # HarmBench (standard safety benchmark)
-python scripts/run_benchmark.py \
+uv run python scripts/run_benchmark.py \
   --benchmark harmbench \
   --harmbench-limit 100 \
   --output-dir results/harmbench_latest
@@ -137,8 +137,92 @@ git commit -m "Week 10 results: GEPA with RLOO + XSTest/HarmBench"
 git push origin sarina-rloo-steerbaseline
 ```
 
+## Quick start on prime intellect **uv version**
+
+### 1. Clone and Checkout
+
+```bash
+git clone https://github.com/05rentao/prompt-optimization.git
+# git clone https://<USERNAME>:<TOKEN>@github.com/05rentao/prompt-optimization.git
+# use below command to also authenticate user.
+
+cd prompt-optimization
+git checkout sarina-rloo-steerbaseline
+```
+
+### 2. Set up venv for dependencies
+
+```bash
+# Install uv
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source $HOME/.local/bin/env
+
+# Sync dependencies
+uv sync
+
+# Set HF token for model initialization
+export HF_TOKEN=hf_xxx
+
+mkdir logs/
+
+uv run python -m vllm.entrypoints.openai.api_server \
+  --model "meta-llama/Llama-3.1-8B-Instruct" \
+  --served-model-name "meta-llama/Llama-3.1-8B-Instruct" \
+  --port 8000 \
+  --gpu-memory-utilization 0.35 \
+  --enforce-eager \
+  --max-model-len 4096 > logs/unified_reflection_vllm.log 2>&1 &
+
+
+export PYTHONPATH=~/prompt-optimization
+export REFLECTION_VLLM_BASE_URL="http://localhost:8000/v1"
+export REFLECTION_VLLM_API_KEY="fake-key"
+```
+
+Wait for the log line `INFO:     Application startup complete.` 
+
+use `tail -f logs/unified_reflection_vllm.log` to watch live updates of model set up at `http://localhost:8000/v1`
+
+### 3.1. Run GEPA Training
+
+```bash
+uv run python runs/coev_run.py --mode gepa --adversary-prompt default
+```
+
+**Outputs:**
+- `smoke_test_gepa.csv` — per-iteration training logs
+- Console output — baseline ASR, stage-wise ASR progression
+
+
+### 3.2. Run reinforce
+
+```bash
+uv run python runs/coev_run.py --mode reinforce --adversary-prompt default --rloo-n 5 --target-queries 2
+```
+
+### 4. Run Benchmarks (Optional)
+
+```bash
+# XSTest (overrefusal measurement)
+uv run python scripts/run_benchmark.py \
+  --benchmark xstest \
+  --xstest-limit 100 \
+  --output-dir results/xstest_latest
+
+# HarmBench (standard safety benchmark)
+uv run python scripts/run_benchmark.py \
+  --benchmark harmbench \
+  --harmbench-limit 100 \
+  --output-dir results/harmbench_latest
+```
+
+### 5. Save Results
+
+use `git add` and `git commit` and `git push`
+
 ---
 
+### see section 4 of `docs/run_on_prime_guide.md`. 
 ## Configuration
 
 ### GEPA Training Config (runs/coev_run.py)
@@ -161,7 +245,7 @@ GepaConfig(
 ### REINFORCE Config (similar structure for single-stage training)
 
 ```bash
-python runs/coev_run.py --mode reinforce \
+uv run python runs/coev_run.py --mode reinforce \
   --adversary-prompt persona \
   --rloo-n 5 \
   --target-queries 2 \
