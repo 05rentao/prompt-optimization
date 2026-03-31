@@ -41,6 +41,15 @@ class HarmBenchExampleRow(TypedDict):
     is_harmful_request: bool
 
 
+class XSTestExampleRow(TypedDict):
+    """Normalized XSTest example schema for overrefusal benchmarking."""
+
+    id: str
+    prompt: str
+    is_safe: bool
+    category: str
+
+
 class GepaExampleRow(TypedDict):
     """GEPA example schema expected by optimize_anything evaluators."""
 
