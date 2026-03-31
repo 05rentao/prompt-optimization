@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from typing import Any, TypedDict
+from typing_extensions import NotRequired
 
 
 @dataclass(frozen=True)
@@ -25,6 +26,8 @@ class RunManifest:
     budget: dict[str, Any]
     endpoints: dict[str, Any] = field(default_factory=dict)
     extra: dict[str, Any] = field(default_factory=dict)
+    #: CLI args, config file path, reflection URL, and env flags (see ``build_config_snapshot``).
+    config_snapshot: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -36,6 +39,15 @@ class HarmBenchExampleRow(TypedDict):
     id: str
     prompt: str
     is_harmful_request: bool
+
+
+class XSTestExampleRow(TypedDict):
+    """Normalized XSTest example schema for overrefusal benchmarking."""
+
+    id: str
+    prompt: str
+    is_safe: bool
+    category: str
 
 
 class GepaExampleRow(TypedDict):
@@ -73,6 +85,9 @@ class CoevTrainingLogRow(TypedDict):
     reward: float
     loss: float
     verdict: str
+    # Present when adversary REINFORCE uses batch_size > 1 (mean reward in `reward`).
+    max_reward: NotRequired[float]
+    batch_size: NotRequired[int]
 
 
 class CoevStageMetricRow(TypedDict, total=False):

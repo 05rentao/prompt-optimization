@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
@@ -69,6 +70,24 @@ class GenerationSession:
         if not hasattr(self.runtime, "generate"):
             raise TypeError("Bound runtime does not support generate().")
         return self.runtime.generate(request, device=device)
+
+    def generate_many(
+        self,
+        requests: list[GenerationRequest],
+        device: str,
+        *,
+        max_workers: int | None = None,
+    ) -> tuple[list[str], list[float]]:
+        """Generate multiple completions; uses ``runtime.generate_many`` when available, else sequential."""
+        if hasattr(self.runtime, "generate_many"):
+            return self.runtime.generate_many(requests, device=device, max_workers=max_workers)
+        texts: list[str] = []
+        latencies: list[float] = []
+        for req in requests:
+            t0 = time.perf_counter()
+            texts.append(self.generate(req, device))
+            latencies.append((time.perf_counter() - t0) * 1000.0)
+        return texts, latencies
 
     def judge(self, behaviors: str | list[str], generations: list[str]) -> list[str]:
         """Checks that generations match behaviors and forward judge requests to the bound runtime."""

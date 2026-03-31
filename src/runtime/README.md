@@ -19,10 +19,14 @@ Runtime and model defaults are centralized in `configs/default.yaml`.
 ## Public API highlights
 
 - Construction
-  - `RuntimeCatalog.build_target_session(...)`
+  - `RuntimeCatalog.build_target_session(...)` (local HF weights; used by vector steering)
+  - `RuntimeCatalog.build_openai_target_session(...)` (HTTP target via same vLLM as reflection)
+  - `build_vllm_target_session(defaults)` / `build_local_hf_target_session(...)` / `build_reflection_gateway_for_defaults(...)` in `src/runtime/target_factory.py`
   - `RuntimeCatalog.build_adversary_session(...)`
   - `RuntimeCatalog.build_judge_session(...)`
   - `RuntimeCatalog.build_reflection_gateway(...)`
+
+Default experiment runs load **`build_vllm_target_session`** from YAML: `runtime.models.target_model_name` and `reflection_model_name` should match the vLLM `--served-model-name`. **`runs/vector_steering_baseline.py`** is the only script that loads the target model locally (`runs.vector_steering_baseline.target_inference: local_hf`).
 - Evaluation
   - `EvaluationConfig`, `EvaluationResult`
   - `EvaluatedSample`, `EvaluationBatchResult`
@@ -63,7 +67,7 @@ For fuller run mode details and setup guidance, use `docs/getting-started.md`.
 
 ```bash
 # GEPA prompt optimization
-uv run runs/gepa_run.py --show-progress
+uv run runs/gepa_run.py
 
 # CoEV baseline runner
 uv run runs/coev_run.py --mode reinforce
@@ -79,15 +83,16 @@ uv run runs/coev_v2_run.py --mode eval
 
 ```bash
 uv run scripts/run_unified_experiment.py --mode gepa
-uv run scripts/run_unified_experiment.py --mode coev --coev-mode reinforce
-uv run scripts/run_unified_experiment.py --mode coev_v2 --coev-v2-mode coev
+uv run scripts/run_unified_experiment.py --mode coev
+uv run scripts/run_unified_experiment.py --mode coev_v2
 ```
 
 ## Logic check summary (current)
 
-- `runs/gepa_run.py`: loads target/reflection defaults from YAML, keeps evaluation and budget knobs in CLI.
-- `runs/coev_run.py`: loads models and reinforce/gepa schedule defaults from YAML, keeps mode/dataset/eval controls in CLI.
-- `runs/coev_v2_run.py`: loads adversary/target/reflection defaults from YAML, keeps stage and evaluation controls in CLI.
+- `runs/gepa_run.py`: target and reflection share the vLLM HTTP endpoint; evaluation and budget knobs stay in CLI.
+- `runs/coev_run.py` / `runs/adversary_run.py`: target via vLLM (same URL as `runtime.reflection`); launch scripts must export `REFLECTION_VLLM_BASE_URL` when not using defaults.
+- `runs/coev_v2_run.py`: same as GEPA for target + reflection.
+- `runs/vector_steering_baseline.py`: local HF target only (steering vectors).
 
 ## Notes for cluster execution
 

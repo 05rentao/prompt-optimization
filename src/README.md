@@ -65,16 +65,16 @@ uv run runs/adversary_run.py --help
 
 ### 5) Best way to run scripts
 
-Use `configs/default.yaml` as the source of truth for stable runtime values (model IDs, reflection endpoint, runtime profile). Override only experiment controls on CLI.
+Use `configs/default.yaml` as the source of truth (model IDs, reflection endpoint, experiment budgets, and `scripts.unified_runner` for the unified wrapper). The unified CLI is only `--mode`.
 
 ```bash
 # Recommended: use the unified wrapper (details in docs/getting-started.md).
 uv run scripts/run_unified_experiment.py --mode gepa
-uv run scripts/run_unified_experiment.py --mode coev --coev-mode reinforce
-uv run scripts/run_unified_experiment.py --mode coev_v2 --coev-v2-mode coev
+uv run scripts/run_unified_experiment.py --mode coev
+uv run scripts/run_unified_experiment.py --mode coev_v2
 
 # Direct script runs (when developing one pipeline):
-uv run runs/gepa_run.py --show-progress
+uv run runs/gepa_run.py
 uv run runs/coev_run.py --mode reinforce
 uv run runs/coev_v2_run.py --mode coev
 uv run runs/adversary_run.py --mode train
@@ -85,16 +85,16 @@ uv run runs/adversary_run.py --mode train
 ```python
 from src.runtime import (
     RuntimeCatalog,
-    LocalHFConfig,
     UnslothAdversaryConfig,
     HarmbenchJudgeConfig,
     OpenAIReflectionConfig,
     GenerationRequest,
+    build_vllm_target_session,
+    load_default_config,
 )
 
-target_session = RuntimeCatalog.build_target_session(
-    LocalHFConfig(model_id="meta-llama/Llama-2-7b-chat-hf")
-)
+defaults = load_default_config()
+target_session = build_vllm_target_session(defaults)
 adversary_session = RuntimeCatalog.build_adversary_session(
     UnslothAdversaryConfig(model_id="unsloth/Qwen2.5-7B-Instruct-bnb-4bit")
 )
@@ -136,9 +136,9 @@ from src.data import load_harmbench_subset
 from src.runtime import (
     EvaluationConfig,
     HarmbenchJudgeConfig,
-    LocalHFConfig,
     RuntimeCatalog,
-    TargetModelConfig,
+    build_vllm_target_session,
+    load_default_config,
     resolve_hf_token,
 )
 from src.types import RunManifest
@@ -160,10 +160,8 @@ def main() -> None:
     args = parse_args()
     token = resolve_hf_token()
 
-    target_cfg = TargetModelConfig(model_id="meta-llama/Llama-2-7b-chat-hf")
-    target_session = RuntimeCatalog.build_target_session(
-        LocalHFConfig(model_id=target_cfg.model_id, use_4bit=True, max_new_tokens=target_cfg.max_new_tokens)
-    )
+    defaults = load_default_config()
+    target_session = build_vllm_target_session(defaults)
     judge_session = RuntimeCatalog.build_judge_session(HarmbenchJudgeConfig())
     eval_cfg = EvaluationConfig(method="judge")
 

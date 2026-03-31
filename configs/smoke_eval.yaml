@@ -1,3 +1,7 @@
+# Same as smoke.yaml but scripts.unified_runner.run_kind: eval for smoke eval pipelines.
+# Use via: RUN_KIND=eval bash scripts/launch_smoke_prime.sh
+# Or: PROMPT_OPT_CONFIG_PATH=configs/smoke_eval.yaml
+
 global:
   dataset_name: "walledai/HarmBench"
   dataset_config: "standard"
@@ -120,7 +124,7 @@ runs:
 scripts:
   unified_runner:
     runtime_profile: "smoke"
-    run_kind: train
+    run_kind: eval
     coev_v2_mode: coev
     coev_v2_rloo_mode: coev
     adversary_mode: train

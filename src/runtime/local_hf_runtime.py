@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import Any, ClassVar
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
@@ -15,6 +15,8 @@ from .interfaces import GenerationRequest, TargetRuntime
 
 class LocalHFChatRuntime(TargetRuntime):
     """Runs local HF chat generation with optional 4-bit loading."""
+
+    supports_concurrent_target_inference: ClassVar[bool] = False
 
     def __init__(self, cfg: LocalHFConfig) -> None:
         """Load tokenizer/model and freeze parameters for inference."""

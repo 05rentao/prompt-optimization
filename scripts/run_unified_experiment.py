@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""Unified runner for CoEV and GEPA experiments.
+"""Unified runner for GEPA, CoEV v2, CoEV v2 RLOO, and adversary experiments.
 
-This script keeps existing experiment entrypoints intact and orchestrates them
-through one CLI surface:
-- gepa   -> runs/gepa_run.py
-- coev   -> runs/coev_run.py
-- coev_v2 -> runs/coev_v2_run.py
-- adversary -> runs/adversary_run.py
+Dispatches to ``runs/gepa_run.py``, ``runs/coev_v2_run.py``,
+``runs/coev_v2_RLOO_run.py``, and ``runs/adversary_run.py``. The only CLI flag is
+``--mode``; everything else comes from the active config YAML
+(``configs/default.yaml`` or ``PROMPT_OPT_CONFIG_PATH``), under
+``scripts.unified_runner`` and ``global`` / ``runs.*``.
 """
 
 from __future__ import annotations
@@ -16,63 +15,67 @@ import shlex
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 from src.runtime.defaults import load_default_config
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 GEPA_SCRIPT = REPO_ROOT / "runs" / "gepa_run.py"
-COEV_SCRIPT = REPO_ROOT / "runs" / "coev_run.py"
 COEV_V2_SCRIPT = REPO_ROOT / "runs" / "coev_v2_run.py"
+COEV_V2_RLOO_SCRIPT = REPO_ROOT / "runs" / "coev_v2_RLOO_run.py"
 ADVERSARY_SCRIPT = REPO_ROOT / "runs" / "adversary_run.py"
 
 
+def _resolve_orchestration(defaults: dict[str, Any]) -> dict[str, Any]:
+    """Read scripts.unified_runner and apply run_kind / mode defaults."""
+
+    u = defaults["scripts"]["unified_runner"]
+    run_kind = u.get("run_kind", "train")
+    coev_v2_mode = u.get("coev_v2_mode")
+    coev_v2_rloo_mode = u.get("coev_v2_rloo_mode")
+    adversary_mode = u.get("adversary_mode", "train")
+
+    if run_kind == "eval":
+        coev_v2_mode = "eval"
+        coev_v2_rloo_mode = "eval"
+        adversary_mode = "eval"
+
+    if coev_v2_mode is None:
+        coev_v2_mode = "coev"
+
+    if coev_v2_rloo_mode is None:
+        coev_v2_rloo_mode = "coev"
+
+    gepa_results_dir = u.get("gepa_results_dir", "results/gepa")
+    coev_v2_results_dir = u.get("coev_v2_results_dir", "results/coev_v2")
+    coev_v2_rloo_results_dir = u.get("coev_v2_rloo_results_dir", "results/coev_v2_rloo")
+    adversary_results_dir = u.get("adversary_results_dir", "results/adversary")
+
+    save_dir = u.get("save_dir")
+
+    device = defaults["global"].get("device")
+
+    return {
+        "coev_v2_mode": coev_v2_mode,
+        "coev_v2_rloo_mode": coev_v2_rloo_mode,
+        "adversary_mode": adversary_mode,
+        "gepa_results_dir": gepa_results_dir,
+        "coev_v2_results_dir": coev_v2_results_dir,
+        "coev_v2_rloo_results_dir": coev_v2_rloo_results_dir,
+        "adversary_results_dir": adversary_results_dir,
+        "save_dir": save_dir,
+        "device": device,
+    }
+
+
 def parse_args() -> argparse.Namespace:
-    defaults = load_default_config()
-    global_defaults = defaults["global"]
-    run_defaults = defaults["runs"]
-    unified_defaults = defaults["scripts"]["unified_runner"]
-
     parser = argparse.ArgumentParser(description="Unified CoEV/GEPA experiment runner.")
-    parser.add_argument("--mode", choices=["gepa", "coev", "coev_v2", "adversary"], required=True)
-
-    # Shared dataset defaults.
-    parser.add_argument("--dataset-name", default=global_defaults["dataset_name"])
-    parser.add_argument("--dataset-config", default=global_defaults["dataset_config"])
-    parser.add_argument("--dataset-split", default=global_defaults["dataset_split"])
-    parser.add_argument("--train-size", type=int, default=run_defaults["gepa"]["train_size"])
-    parser.add_argument("--val-size", type=int, default=run_defaults["gepa"]["val_size"])
-    parser.add_argument("--seed", type=int, default=global_defaults["seed"])
-
-    # GEPA-specific defaults.
-    parser.add_argument("--max-metric-calls", type=int, default=run_defaults["gepa"]["max_metric_calls"])
-    parser.add_argument("--max-tokens", type=int, default=run_defaults["gepa"]["max_tokens"])
-    parser.add_argument("--temperature", type=float, default=run_defaults["gepa"]["temperature"])
     parser.add_argument(
-        "--gepa-results-dir",
-        default=unified_defaults.get("gepa_results_dir", "results/gepa"),
+        "--mode",
+        choices=["gepa", "coev_v2", "coev_v2_rloo", "adversary"],
+        required=True,
     )
-    parser.add_argument("--gepa-extra-args", default="")
-
-    # CoEV-specific defaults.
-    parser.add_argument("--coev-mode", choices=["reinforce", "gepa", "eval"], default="reinforce")
-    parser.add_argument("--coev-v2-mode", choices=["coev", "eval"], default=None)
-    parser.add_argument("--device", default=global_defaults["device"])
-    parser.add_argument("--coev-results-dir", default=unified_defaults["coev_results_dir"])
-    parser.add_argument("--save-dir", default=None)
-    parser.add_argument("--eval-instruction", default=None)
-    parser.add_argument("--eval-method", choices=["judge", "heuristic"], default=run_defaults["coev"]["eval_method"])
-    parser.add_argument("--refusal-threshold", type=float, default=run_defaults["coev"]["refusal_threshold"])
-    parser.add_argument("--asr-threshold", type=float, default=run_defaults["coev"]["asr_threshold"])
-    parser.add_argument("--coev-extra-args", default="")
-
-    # Adversary-specific defaults.
-    parser.add_argument("--adversary-mode", choices=["train", "eval"], default="train")
-    parser.add_argument(
-        "--adversary-results-dir",
-        default=unified_defaults.get("adversary_results_dir", run_defaults["adversary"]["results_dir"]),
-    )
-    parser.add_argument("--adversary-extra-args", default="")
     return parser.parse_args()
 
 
@@ -81,178 +84,80 @@ def run_command(cmd: list[str]) -> None:
     subprocess.run(cmd, check=True, cwd=str(REPO_ROOT))
 
 
-def build_gepa_command(args: argparse.Namespace) -> list[str]:
-    cmd = [
-        sys.executable,
-        str(GEPA_SCRIPT),
-        "--dataset-name",
-        args.dataset_name,
-        "--dataset-config",
-        args.dataset_config,
-        "--dataset-split",
-        args.dataset_split,
-        "--train-size",
-        str(args.train_size),
-        "--val-size",
-        str(args.val_size),
-        "--seed",
-        str(args.seed),
-        "--max-metric-calls",
-        str(args.max_metric_calls),
-        "--max-tokens",
-        str(args.max_tokens),
-        "--temperature",
-        str(args.temperature),
-        "--results-dir",
-        args.gepa_results_dir,
-        "--show-progress",
-    ]
-    if args.gepa_extra_args.strip():
-        cmd.extend(shlex.split(args.gepa_extra_args))
+def build_gepa_command(o: dict[str, Any]) -> list[str]:
+    cmd: list[str] = [sys.executable, str(GEPA_SCRIPT), "--results-dir", o["gepa_results_dir"]]
+    if o["device"]:
+        cmd.extend(["--device", str(o["device"])])
     return cmd
 
 
-def build_coev_command(args: argparse.Namespace) -> list[str]:
-    cmd = [
-        sys.executable,
-        str(COEV_SCRIPT),
-        "--mode",
-        args.coev_mode,
-        "--dataset-name",
-        args.dataset_name,
-        "--dataset-config",
-        args.dataset_config,
-        "--dataset-split",
-        args.dataset_split,
-        "--train-size",
-        str(args.train_size),
-        "--val-size",
-        str(args.val_size),
-        "--seed",
-        str(args.seed),
-        "--results-dir",
-        args.coev_results_dir,
-        "--eval-method",
-        args.eval_method,
-        "--refusal-threshold",
-        str(args.refusal_threshold),
-        "--asr-threshold",
-        str(args.asr_threshold),
-    ]
-    if args.device:
-        cmd.extend(["--device", args.device])
-    if args.save_dir:
-        cmd.extend(["--save-dir", args.save_dir])
-    if args.eval_instruction:
-        cmd.extend(["--eval-instruction", args.eval_instruction])
-    if args.coev_extra_args.strip():
-        cmd.extend(shlex.split(args.coev_extra_args))
-    return cmd
-
-
-def build_coev_v2_command(args: argparse.Namespace) -> list[str]:
-    coev_v2_mode = args.coev_v2_mode
-    if coev_v2_mode is None:
-        # Backward compatibility: infer coev_v2 mode from legacy coev-mode flag.
-        coev_v2_mode = "coev" if args.coev_mode in {"reinforce", "gepa"} else "eval"
-
-    cmd = [
+def build_coev_v2_command(o: dict[str, Any]) -> list[str]:
+    cmd: list[str] = [
         sys.executable,
         str(COEV_V2_SCRIPT),
         "--mode",
-        coev_v2_mode,
-        "--dataset-name",
-        args.dataset_name,
-        "--dataset-config",
-        args.dataset_config,
-        "--dataset-split",
-        args.dataset_split,
-        "--train-size",
-        str(args.train_size),
-        "--val-size",
-        str(args.val_size),
-        "--seed",
-        str(args.seed),
+        o["coev_v2_mode"],
         "--results-dir",
-        args.coev_results_dir,
-        "--max-metric-calls",
-        str(args.max_metric_calls),
-        "--max-new-tokens",
-        str(args.max_tokens),
-        "--gepa-max-tokens",
-        str(args.max_tokens),
-        "--gepa-temperature",
-        str(args.temperature),
-        "--eval-method",
-        args.eval_method,
-        "--refusal-threshold",
-        str(args.refusal_threshold),
-        "--asr-threshold",
-        str(args.asr_threshold),
+        o["coev_v2_results_dir"],
     ]
-    if args.device:
-        cmd.extend(["--device", args.device])
-    if args.save_dir:
-        cmd.extend(["--save-dir", args.save_dir])
-    if args.coev_extra_args.strip():
-        cmd.extend(shlex.split(args.coev_extra_args))
+    if o["device"]:
+        cmd.extend(["--device", str(o["device"])])
+    if o.get("save_dir"):
+        cmd.extend(["--save-dir", str(o["save_dir"])])
     return cmd
 
 
-def build_adversary_command(args: argparse.Namespace) -> list[str]:
-    cmd = [
+def build_coev_v2_rloo_command(o: dict[str, Any]) -> list[str]:
+    cmd: list[str] = [
+        sys.executable,
+        str(COEV_V2_RLOO_SCRIPT),
+        "--mode",
+        o["coev_v2_rloo_mode"],
+        "--results-dir",
+        o["coev_v2_rloo_results_dir"],
+    ]
+    if o["device"]:
+        cmd.extend(["--device", str(o["device"])])
+    if o.get("save_dir"):
+        cmd.extend(["--save-dir", str(o["save_dir"])])
+    return cmd
+
+
+def build_adversary_command(o: dict[str, Any]) -> list[str]:
+    cmd: list[str] = [
         sys.executable,
         str(ADVERSARY_SCRIPT),
         "--mode",
-        args.adversary_mode,
-        "--dataset-name",
-        args.dataset_name,
-        "--dataset-config",
-        args.dataset_config,
-        "--dataset-split",
-        args.dataset_split,
-        "--train-size",
-        str(args.train_size),
-        "--val-size",
-        str(args.val_size),
-        "--seed",
-        str(args.seed),
+        o["adversary_mode"],
         "--results-dir",
-        args.adversary_results_dir,
-        "--eval-method",
-        args.eval_method,
-        "--refusal-threshold",
-        str(args.refusal_threshold),
-        "--asr-threshold",
-        str(args.asr_threshold),
+        o["adversary_results_dir"],
     ]
-    if args.device:
-        cmd.extend(["--device", args.device])
-    if args.save_dir:
-        cmd.extend(["--save-dir", args.save_dir])
-    if args.adversary_extra_args.strip():
-        cmd.extend(shlex.split(args.adversary_extra_args))
+    if o["device"]:
+        cmd.extend(["--device", str(o["device"])])
+    if o.get("save_dir"):
+        cmd.extend(["--save-dir", str(o["save_dir"])])
     return cmd
 
 
 def main() -> None:
     args = parse_args()
+    defaults = load_default_config()
+    o = _resolve_orchestration(defaults)
 
     if args.mode == "gepa":
-        run_command(build_gepa_command(args))
-        return
-
-    if args.mode == "coev":
-        run_command(build_coev_command(args))
+        run_command(build_gepa_command(o))
         return
 
     if args.mode == "coev_v2":
-        run_command(build_coev_v2_command(args))
+        run_command(build_coev_v2_command(o))
+        return
+
+    if args.mode == "coev_v2_rloo":
+        run_command(build_coev_v2_rloo_command(o))
         return
 
     if args.mode == "adversary":
-        run_command(build_adversary_command(args))
-
+        run_command(build_adversary_command(o))
 
 
 if __name__ == "__main__":

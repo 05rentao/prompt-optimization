@@ -8,10 +8,17 @@ from .config import (
     LocalHFConfig,
     ModelConfig,
     OpenAIReflectionConfig,
+    OpenAITargetConfig,
     TargetModelConfig,
     UnslothAdversaryConfig,
 )
-from .defaults import load_default_config
+from .defaults import build_config_snapshot, load_default_config, resolve_config_path
+from .target_factory import (
+    build_local_hf_target_session,
+    build_reflection_gateway_for_defaults,
+    build_vllm_target_session,
+    resolve_reflection_env_overrides,
+)
 from .env import resolve_hf_token, scoped_env
 from .evaluation import EvaluationBatchResult, EvaluationConfig, EvaluatedSample, EvaluationResult, evaluate_examples, evaluate_outputs
 from .gepa_prompt_optimization import (
@@ -23,6 +30,7 @@ from .gepa_prompt_optimization import (
     run_gepa_prompt_optimization,
 )
 from .interfaces import GenerationRequest, GenerationSession, JudgeRuntime, LoRABridge, ReflectionGateway, TargetRuntime
+from .timed_target import cap_thread_workers, run_target_requests_ordered, timed_target_generate
 
 __all__ = [
     "GenerationRequest",
@@ -36,6 +44,7 @@ __all__ = [
     "GepaOptimizationConfig",
     "LoRABridge",
     "OpenAIReflectionConfig",
+    "OpenAITargetConfig",
     "ReflectionGateway",
     "RuntimeCatalog",
     "TargetRuntime",
@@ -53,7 +62,16 @@ __all__ = [
     "run_gepa_prompt_optimization",
     "run_dual_role_gepa_prompt_optimization",
     "load_default_config",
+    "build_config_snapshot",
+    "resolve_config_path",
+    "build_vllm_target_session",
+    "build_local_hf_target_session",
+    "build_reflection_gateway_for_defaults",
+    "resolve_reflection_env_overrides",
     "resolve_hf_token",
     "scoped_env",
+    "timed_target_generate",
+    "cap_thread_workers",
+    "run_target_requests_ordered",
 ]
 

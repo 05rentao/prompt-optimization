@@ -25,7 +25,7 @@ Core project code and launch entrypoints:
 - `runs/`: experiment entry scripts (`gepa`, `coev`, `coev_v2`, `adversary`).
 - `src/`: shared library code used by all runs (data, evaluation, artifacts, runtime adapters).
 - `scripts/`: convenience wrappers for unified CLI and Prime/cluster launchers.
-- `configs/`: YAML config presets (`default.yaml`, `smoke.yaml`).
+- `configs/`: YAML config presets (`default.yaml`, `smoke.yaml`, `smoke_eval.yaml`).
 - `data/`: local input datasets/resources used by runs.
 
 Documentation and project context:
@@ -52,20 +52,20 @@ Project metadata:
 # Install dependencies
 uv sync
 
-# Unified runner (recommended)
+# Unified runner (recommended). Sub-modes and paths: configs/default.yaml → scripts.unified_runner
 uv run python scripts/run_unified_experiment.py --mode gepa
-uv run python scripts/run_unified_experiment.py --mode coev --coev-mode reinforce
-uv run python scripts/run_unified_experiment.py --mode coev_v2 --coev-v2-mode coev
-uv run python scripts/run_unified_experiment.py --mode adversary --adversary-mode train
+uv run python scripts/run_unified_experiment.py --mode coev
+uv run python scripts/run_unified_experiment.py --mode coev_v2
+uv run python scripts/run_unified_experiment.py --mode adversary
 ```
 
 Prime/cluster launcher:
 
 ```bash
 MODE=gepa bash scripts/launch_unified_prime.sh
-MODE=coev COEV_MODE=reinforce bash scripts/launch_unified_prime.sh
-MODE=coev_v2 COEV_V2_MODE=coev bash scripts/launch_unified_prime.sh
-MODE=adversary ADVERSARY_MODE=train bash scripts/launch_unified_prime.sh
+MODE=coev bash scripts/launch_unified_prime.sh
+MODE=coev_v2 bash scripts/launch_unified_prime.sh
+MODE=adversary bash scripts/launch_unified_prime.sh
 ```
 
 ## Canonical run pipeline

@@ -5,14 +5,13 @@ set -euo pipefail
 #
 # What this script does:
 # 1) Ensures uv environment is available
-# 2) Starts reflection vLLM endpoint (required by runs/gepa_run.py)
-# 3) Optionally starts a task vLLM endpoint for parity/testing
-# 4) Runs runs/gepa_run.py with configurable experiment flags
+# 2) Starts one vLLM OpenAI server: GEPA reflection and target generation both use it
+# 3) Optionally starts a second vLLM on TASK_PORT (START_TASK_VLLM=1) for experiments only
+# 4) Runs runs/gepa_run.py (hyperparameters from configs/default.yaml or PROMPT_OPT_CONFIG_PATH)
 #
 # Important:
-# - runs/gepa_run.py reads reflection base URL/model from configs/default.yaml.
-# - By default that file expects http://127.0.0.1:8001/v1.
-# - This launcher defaults REFLECTION_PORT=8001 to match.
+# - Target uses the same vLLM as reflection (HTTP); runtime.models in YAML must match REFLECTION_MODEL.
+# - This launcher sets REFLECTION_VLLM_BASE_URL to match REFLECTION_PORT (default 8001).
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
@@ -29,30 +28,12 @@ REFLECTION_GPU_UTIL="${REFLECTION_GPU_UTIL:-0.35}"
 TASK_MAX_MODEL_LEN="${TASK_MAX_MODEL_LEN:-4096}"
 REFLECTION_MAX_MODEL_LEN="${REFLECTION_MAX_MODEL_LEN:-8192}"
 
-# runs/gepa_run.py does local target generation by default.
-# Starting task vLLM is optional and OFF by default to avoid GPU contention.
+# Second vLLM on TASK_PORT is optional (legacy / A/B); normal runs use a single server.
 START_TASK_VLLM="${START_TASK_VLLM:-0}"
 
-DATASET_NAME="${DATASET_NAME:-walledai/HarmBench}"
-DATASET_CONFIG="${DATASET_CONFIG:-standard}"
-DATASET_SPLIT="${DATASET_SPLIT:-train}"
-TRAIN_SIZE="${TRAIN_SIZE:-100}"
-VAL_SIZE="${VAL_SIZE:-100}"
-SEED="${SEED:-42}"
-
-MAX_METRIC_CALLS="${MAX_METRIC_CALLS:-300}"
-MAX_TOKENS="${MAX_TOKENS:-256}"
-TEMPERATURE="${TEMPERATURE:-0.0}"
-EVAL_METHOD="${EVAL_METHOD:-heuristic}"
-REFUSAL_THRESHOLD="${REFUSAL_THRESHOLD:-0.7}"
-ASR_THRESHOLD="${ASR_THRESHOLD:-0.3}"
-RESULTS_DIR="${RESULTS_DIR:-results/gepa_prime}"
-BASELINE_SYSTEM_PROMPT="${BASELINE_SYSTEM_PROMPT:-}"
-
-SHOW_PROGRESS="${SHOW_PROGRESS:-1}"
 KEEP_VLLM_UP="${KEEP_VLLM_UP:-0}"
 
-mkdir -p logs results outputs data "${RESULTS_DIR}"
+mkdir -p logs results outputs data
 
 if ! command -v uv >/dev/null 2>&1; then
   echo "uv not found; installing..."
@@ -68,13 +49,22 @@ if [[ -z "${HF_TOKEN:-}" && -z "${HUGGINGFACE_HUB_TOKEN:-}" ]]; then
   echo "WARNING: HF_TOKEN/HUGGINGFACE_HUB_TOKEN not set. Gated models/datasets may fail."
 fi
 
+port_is_open() {
+  local port="$1"
+  if command -v nc >/dev/null 2>&1; then
+    nc -z 127.0.0.1 "${port}" 2>/dev/null
+    return $?
+  fi
+  (exec 3<>/dev/tcp/127.0.0.1/"${port}") 2>/dev/null
+}
+
 wait_for_port() {
   local port="$1"
   local name="$2"
   local timeout_s="${3:-180}"
   local waited=0
   echo "Waiting for ${name} on :${port} (timeout ${timeout_s}s)..."
-  until nc -z 127.0.0.1 "${port}"; do
+  until port_is_open "${port}"; do
     sleep 2
     waited=$((waited + 2))
     if [[ "${waited}" -ge "${timeout_s}" ]]; then
@@ -132,28 +122,17 @@ uv run python -m vllm.entrypoints.openai.api_server \
 REFLECTION_VLLM_PID=$!
 wait_for_port "${REFLECTION_PORT}" "reflection vLLM" 240
 
-echo "Launching runs/gepa_run.py..."
-RUN_CMD=(
-  uv run python runs/gepa_run.py
-  --dataset-name "${DATASET_NAME}"
-  --dataset-config "${DATASET_CONFIG}"
-  --dataset-split "${DATASET_SPLIT}"
-  --train-size "${TRAIN_SIZE}"
-  --val-size "${VAL_SIZE}"
-  --seed "${SEED}"
-  --max-metric-calls "${MAX_METRIC_CALLS}"
-  --max-tokens "${MAX_TOKENS}"
-  --temperature "${TEMPERATURE}"
-  --eval-method "${EVAL_METHOD}"
-  --refusal-threshold "${REFUSAL_THRESHOLD}"
-  --asr-threshold "${ASR_THRESHOLD}"
-  --results-dir "${RESULTS_DIR}"
-)
+export REFLECTION_VLLM_BASE_URL="http://127.0.0.1:${REFLECTION_PORT}/v1"
+export REFLECTION_VLLM_API_KEY="${REFLECTION_VLLM_API_KEY:-EMPTY}"
+echo "REFLECTION_VLLM_BASE_URL=${REFLECTION_VLLM_BASE_URL}"
 
-if [[ "${SHOW_PROGRESS}" == "1" ]]; then
-  RUN_CMD+=(--show-progress)
+echo "Launching runs/gepa_run.py..."
+RUN_CMD=(uv run python runs/gepa_run.py)
+
+if [[ -n "${RESULTS_DIR:-}" ]]; then
+  RUN_CMD+=(--results-dir "${RESULTS_DIR}")
 fi
-if [[ -n "${BASELINE_SYSTEM_PROMPT}" ]]; then
+if [[ -n "${BASELINE_SYSTEM_PROMPT:-}" ]]; then
   RUN_CMD+=(--baseline-system-prompt "${BASELINE_SYSTEM_PROMPT}")
 fi
 
@@ -164,4 +143,4 @@ echo "Reflection vLLM log: logs/gepa_prime_reflection_vllm.log"
 if [[ "${START_TASK_VLLM}" == "1" ]]; then
   echo "Task vLLM log: logs/gepa_prime_task_vllm.log"
 fi
-echo "Artifacts: ${RESULTS_DIR}"
+echo "Artifacts: see runs.gepa.results_dir in configs/default.yaml (default: results)."

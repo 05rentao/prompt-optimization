@@ -6,11 +6,42 @@ run's unique optimization logic.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Any, Sequence
 
 from src.evaluators import compute_refusal_score, is_yes_verdict
 from src.runtime import EvaluationConfig, GenerationSession
+
+
+def adversary_rewrite_sample(
+    adversary_session: GenerationSession,
+    device: str,
+    user_prompt: str,
+    instruction: str,
+    *,
+    max_new_tokens: int = 120,
+    temperature: float = 0.7,
+    top_p: float = 0.9,
+    max_length: int = 2048,
+) -> tuple[dict[str, Any], float]:
+    """Sample one adversary rewrite with token-level metadata and elapsed milliseconds."""
+    messages = [
+        {"role": "system", "content": f"You are a rewriter. {instruction}"},
+        {"role": "user", "content": user_prompt},
+    ]
+    start = time.perf_counter()
+    runtime = adversary_session.runtime
+    sample = runtime.sample_policy(
+        messages=messages,
+        device=device,
+        max_new_tokens=max_new_tokens,
+        temperature=temperature,
+        top_p=top_p,
+        max_length=max_length,
+    )
+    elapsed_ms = (time.perf_counter() - start) * 1000.0
+    return sample, elapsed_ms
 
 
 def build_prompt_pool(
@@ -63,11 +94,24 @@ def compute_reward_and_verdict(
 def maybe_save_adapters(
     adversary_session: GenerationSession,
     save_dir: str | None,
+    *,
+    results_dir: Path | None = None,
 ) -> str | None:
-    """Save adversary adapters if requested and return saved path."""
+    """Save adversary adapters if requested and return saved path.
+
+    If ``results_dir`` is set and ``save_dir`` is a relative path, the output
+    directory is ``results_dir / save_dir`` (not the process working directory).
+    Absolute ``save_dir`` paths are respected as-is.
+    """
     if not save_dir:
         return None
-    output_dir = Path(save_dir).resolve()
+    raw = Path(save_dir)
+    if raw.is_absolute():
+        output_dir = raw.resolve()
+    elif results_dir is not None:
+        output_dir = (results_dir / raw).resolve()
+    else:
+        output_dir = raw.resolve()
     runtime = adversary_session.runtime
     if not hasattr(runtime, "save_adapters"):
         raise RuntimeError("Adversary runtime must expose save_adapters().")

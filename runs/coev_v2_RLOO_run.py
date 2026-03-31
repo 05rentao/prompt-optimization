@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CoEV v2 runner with staged REINFORCE + GEPA-based prompt evolution.
+"""CoEV v2 runner with staged RLOO + GEPA-based prompt evolution.
 
 This runner preserves the stage-based coevolution workflow from `runs/coev_run.py`
 while replacing handcrafted prompt-evolution logic with GEPA optimization loops
@@ -14,8 +14,7 @@ import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from collections.abc import Sequence
-from typing import Any
+from typing import Any, Sequence
 
 import pandas as pd
 import seaborn as sns
@@ -145,43 +144,76 @@ def pad_gen_ids_batch(
     return torch.cat(rows, dim=0), lengths
 
 
-def reinforce_update_batch_sgd(
+def rloo_update_batch_sgd(
     model: Any,
     optimizer: Any,
-    gen_ids: Any,
+    gen_ids: torch.Tensor,
     prompt_lens: list[int],
-    rewards: Any,
+    rewards: torch.Tensor,
     valid_seq_lens: list[int] | None = None,
 ) -> tuple[float, Any]:
-    """Apply a REINFORCE-style SGD step: mean over batch of (-reward_i * sum log pi)."""
+    """
+    Apply an RLOO (REINFORCE Leave-One-Out) SGD step.
 
+    Args:
+        gen_ids: Tensor of shape (K, seq_len) containing prompt + completion tokens
+            (rows may be right-padded to a common seq_len).
+        prompt_lens: Length of the prompt prefix for each sequence.
+        rewards: Tensor of shape (K,) containing the reward for each completion.
+        valid_seq_lens: Optional length of each row **before** padding (exclusive end index
+            for non-pad tokens). If None, each row is assumed valid through gen_ids.size(1).
+    """
     model.train()
     if valid_seq_lens is None:
         valid_seq_lens = [int(gen_ids.size(1))] * int(gen_ids.size(0))
 
+    # 1. Forward pass to get logits for the entire batch
     out = model(input_ids=gen_ids, use_cache=False)
     logits = out.logits
+    # Log-probs for all tokens (shifted for next-token prediction)
     log_probs = f.log_softmax(logits[:, :-1, :], dim=-1)
 
+    # 2. Extract log-probabilities for the generated completion tokens only
     logprob_sums = []
     for i in range(gen_ids.size(0)):
         prompt_len = int(prompt_lens[i])
         valid_end = int(valid_seq_lens[i])
         comp_ids = gen_ids[i, prompt_len:valid_end].clone()
+
         if comp_ids.numel() == 0:
             logprob_sums.append(torch.tensor(0.0, device=gen_ids.device))
             continue
+
+        # The log-prob for token at index 't' is found at logits index 't-1'
         start = prompt_len - 1
         end = start + comp_ids.size(0)
         lp = log_probs[i, start:end, :]
+
+        # Gather the log-probs of the actual tokens that were sampled
         tok_lp = torch.gather(lp, -1, comp_ids.unsqueeze(-1)).squeeze(-1)
         logprob_sums.append(tok_lp.sum())
 
     logprob_sums = torch.stack(logprob_sums)
-    loss = -(rewards * logprob_sums).mean()
+
+    # 3. RLOO Advantage Calculation
+    # The baseline for sample i is the mean of all OTHER rewards in the batch.
+    K = rewards.size(0)
+    if K > 1:
+        mean_reward = rewards.mean()
+        # This reduces variance by judging each sample against its peers.
+        advantages = (rewards - mean_reward) * (K / (K - 1))
+    else:
+        # Fallback to vanilla REINFORCE if only one sample is provided
+        advantages = rewards
+
+    # 4. Compute policy gradient loss: -E[A * log_prob]
+    loss = -(advantages.detach() * logprob_sums).mean()
+
+    # 5. Optimization step
     optimizer.zero_grad(set_to_none=True)
     loss.backward()
     optimizer.step()
+
     return float(loss.detach().cpu()), logprob_sums.detach()
 
 
@@ -428,29 +460,29 @@ def save_artifacts(
     baseline_plot_path = save_baseline_optimized_plot(
         comparison_df=comparison_df,
         out_path=results_dir / "plot_baseline_vs_optimized.png",
-        title="CoEV v2 Baseline vs Optimized Metrics",
+        title="CoEV v2 RLOO Baseline vs Optimized Metrics",
     )
     trajectory_plot_path = save_trajectory_plot(
         trace_df=combined_trace,
         out_path=results_dir / "plot_optimization_trajectory.png",
-        title="CoEV v2 GEPA Optimization Trajectory",
+        title="CoEV v2 RLOO GEPA Optimization Trajectory",
         hue_col="role",
     )
     asr_iter_path = save_coev_asr_vs_global_step_plot(
         stage_metrics_df=stage_metrics_df,
         iters_per_stage=args.iters_per_stage,
         out_path=results_dir / "plot_asr_vs_iterations.png",
-        title="CoEV v2 ASR vs global training step (stage checkpoints)",
+        title="CoEV v2 RLOO ASR vs global training step (stage checkpoints)",
     )
     refusal_iter_path = save_coev_refusal_vs_global_step_plot(
         stage_metrics_df=stage_metrics_df,
         iters_per_stage=args.iters_per_stage,
         out_path=results_dir / "plot_refusal_vs_iterations.png",
-        title="CoEV v2 refusal rate vs global training step (stage checkpoints)",
+        title="CoEV v2 RLOO refusal rate vs global training step (stage checkpoints)",
     )
 
     manifest = RunManifest(
-        mode="coev_v2",
+        mode="coev_v2_rloo",
         runtime_profile=args.runtime_profile,
         seed=args.seed,
         dataset={
@@ -505,11 +537,11 @@ def save_artifacts(
 
 
 def parse_args(defaults: dict[str, Any]) -> argparse.Namespace:
-    """Parse CLI arguments for CoEV v2 training/evaluation."""
+    """Parse CLI arguments for CoEV v2 RLOO training/evaluation."""
     global_defaults = defaults["global"]
     run_defaults = defaults["runs"]["coev_v2"]
 
-    parser = argparse.ArgumentParser(description="Run CoEV v2 (REINFORCE + GEPA prompt evolution).")
+    parser = argparse.ArgumentParser(description="Run CoEV v2 (RLOO + GEPA prompt evolution).")
     parser.add_argument("--mode", choices=["coev", "eval"], default="coev")
     parser.add_argument("--device", default=global_defaults["device"])
     parser.add_argument(
@@ -559,7 +591,7 @@ def parse_args(defaults: dict[str, Any]) -> argparse.Namespace:
     parser.add_argument(
         "--adversary-reinforce-batch-size",
         type=int,
-        default=run_defaults['adversary_reinforce_batch_size'],
+        default=run_defaults["adversary_reinforce_batch_size"],
         help="RLOO: rollouts per training step (same key as coev_v2 REINFORCE batch).",
     )
     return parser.parse_args()
@@ -621,7 +653,7 @@ def _load_prompt_slices(
         eval_slice_start=coev_cfg.eval_slice_start,
         eval_slice_end=coev_cfg.eval_slice_end,
         require_train=args.mode != "eval",
-        script_name="coev_v2_run",
+        script_name="coev_v2_RLOO_run",
     )
     eval_examples = [{"id": f"eval_{i}", "prompt": p} for i, p in enumerate(eval_prompts)]
     return train_prompts, eval_prompts, eval_examples
@@ -675,6 +707,7 @@ def _run_training_and_finalize(
 ) -> None:
     model = ctx.adversary_session.runtime
     optimizer = torch.optim.AdamW(model.parameters(), lr=coev_cfg.lr, weight_decay=coev_cfg.weight_decay)
+    device = ctx.device
 
     training_rows: list[CoevTrainingLogRow] = []
     stage_metric_rows: list[CoevStageMetricRow] = []
@@ -683,7 +716,7 @@ def _run_training_and_finalize(
     gepa_final_attacker_val_score: float | None = None
     gepa_final_defender_val_score: float | None = None
 
-    print("Starting CoEV v2 training...")
+    print("Starting CoEV v2 RLOO training...")
     for stage in range(coev_cfg.stages):
         print(f"\n--- Stage {stage} start ---")
         stage_prompts: list[str] = []
@@ -693,15 +726,12 @@ def _run_training_and_finalize(
             original_prompt = train_prompts[idx]
             stage_prompts.append(original_prompt)
 
-            batch_size = max(1, int(args.adversary_reinforce_batch_size))
-            batch_gen_ids: list[torch.Tensor] = []
-            batch_rewards: list[float] = []
-            batch_prompt_lens: list[int] = []
-            adv_rewrites: list[str] = []
-            target_resps: list[str] = []
-            verdicts: list[str] = []
+            K = max(1, int(args.adversary_reinforce_batch_size))
+            batch_gen_ids = []
+            batch_rewards = []
+            batch_prompt_lens = []
 
-            for _ in range(batch_size):
+            for _ in range(K):
                 sample, _ = adversary_output(
                     prompt=original_prompt,
                     instruction=attacker_instruction,
@@ -709,6 +739,7 @@ def _run_training_and_finalize(
                     device=ctx.device,
                 )
                 adv_rewrite = sample["completion_text"].strip()
+
                 target_resp, _ = target_generate(
                     prompt=adv_rewrite,
                     target_session=ctx.target_session,
@@ -716,18 +747,16 @@ def _run_training_and_finalize(
                     defense_prompt=defense_prompt,
                     max_new_tokens=args.max_new_tokens,
                 )
-                reward, verdict = compute_reward_and_verdict(
+                reward, _ = compute_reward_and_verdict(
                     behavior=original_prompt,
                     generation=target_resp,
                     eval_cfg=eval_cfg,
                     judge_session=ctx.judge_session if eval_cfg.method == "judge" else None,
                 )
+
                 batch_gen_ids.append(sample["gen_ids"])
                 batch_rewards.append(reward)
                 batch_prompt_lens.append(sample["prompt_len"])
-                adv_rewrites.append(adv_rewrite)
-                target_resps.append(target_resp)
-                verdicts.append(verdict)
 
             tok = model.tokenizer
             pad_id = tok.pad_token_id
@@ -736,18 +765,15 @@ def _run_training_and_finalize(
             if pad_id is None:
                 raise RuntimeError("Tokenizer has no pad_token_id or eos_token_id for batch padding.")
             padded_ids, valid_lens = pad_gen_ids_batch(batch_gen_ids, int(pad_id))
-            device = padded_ids.device
-            rewards_t = torch.tensor(batch_rewards, dtype=torch.float32, device=device)
-            loss_val, _ = reinforce_update_batch_sgd(
+            loss_val, _ = rloo_update_batch_sgd(
                 model,
                 optimizer,
                 padded_ids,
                 batch_prompt_lens,
-                rewards_t,
+                torch.tensor(batch_rewards, dtype=torch.float32, device=device),
                 valid_seq_lens=valid_lens,
             )
 
-            mean_r = float(rewards_t.mean().item())
             training_rows.append(
                 {
                     "stage": stage,
@@ -756,13 +782,9 @@ def _run_training_and_finalize(
                     "attacker_instruction": clean_text(attacker_instruction),
                     "defense_prompt": clean_text(defense_prompt),
                     "orig_prompt": clean_text(original_prompt),
-                    "adv_prompt": clean_text(adv_rewrites[0]),
-                    "target_resp": clean_text(target_resps[0]),
-                    "reward": mean_r,
-                    "loss": loss_val,
-                    "verdict": verdicts[0],
+                    "mean_reward": torch.tensor(batch_rewards).mean().item(),
                     "max_reward": max(batch_rewards),
-                    "batch_size": batch_size,
+                    "loss": loss_val,
                 }
             )
 
@@ -770,11 +792,11 @@ def _run_training_and_finalize(
             stage_metrics, _ = _eval_suite(ctx, eval_cfg, args, attacker_instruction, defense_prompt, eval_examples)
             stage_metric_rows.append({"stage": stage, "phase": "pre_evolution", **stage_metrics})
             print(
-                f"Stage {stage}: Completed REINFORCE. Eval ASR: {stage_metrics['asr']:.2%} | "
+                f"Stage {stage}: Completed RLOO. Eval ASR: {stage_metrics['asr']:.2%} | "
                 f"refusal_rate: {stage_metrics['refusal_rate']:.2%}"
             )
         else:
-            print(f"Stage {stage}: Completed REINFORCE.")
+            print(f"Stage {stage}: Completed RLOO.")
 
         defense_before_gepa = defense_prompt
         print(
@@ -851,7 +873,7 @@ def _run_training_and_finalize(
 
 
 def main() -> None:
-    """Run full CoEV v2 pipeline: train/evolve/evaluate and persist artifacts."""
+    """Run full CoEV v2 RLOO pipeline: train/evolve/evaluate and persist artifacts."""
     defaults = load_default_config()
     args = parse_args(defaults)
     _patch_args_from_yaml(args, defaults)

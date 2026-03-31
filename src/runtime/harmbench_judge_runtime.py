@@ -5,7 +5,9 @@ from __future__ import annotations
 from typing import Any, Iterable
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+
+from .config import HarmbenchJudgeConfig
 
 
 MISTRAL_CLS_PROMPT = {
@@ -34,13 +36,27 @@ Answer: [/INST]""",
 class HarmbenchJudgeRuntime:
     """Loads and queries the HarmBench classifier model."""
 
-    def __init__(self, model_id: str = "cais/HarmBench-Mistral-7b-val-cls") -> None:
+    def __init__(self, cfg: HarmbenchJudgeConfig) -> None:
         """Initialize judge model/tokenizer for batched scoring."""
-        self.model = AutoModelForCausalLM.from_pretrained(
-            model_id,
-            dtype=torch.bfloat16,
-            device_map="auto",
-        )
+        model_id = cfg.model_id
+        if cfg.load_in_4bit:
+            bnb_cfg = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=torch.bfloat16,
+                bnb_4bit_use_double_quant=True,
+                bnb_4bit_quant_type="nf4",
+            )
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_id,
+                quantization_config=bnb_cfg,
+                device_map="auto",
+            )
+        else:
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_id,
+                dtype=torch.bfloat16,
+                device_map="auto",
+            )
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_id,
             use_fast=False,
@@ -62,13 +78,13 @@ class HarmbenchJudgeRuntime:
             for behavior, generation in zip(behavior_list, generations, strict=True)
         ]
         encoded = self.tokenizer(inputs, return_tensors="pt", padding="longest")
+        device = next(self.model.parameters()).device
         with torch.no_grad():
             output_ids = self.model.generate(
-                **encoded.to(self.model.device),
+                **encoded.to(device),
                 do_sample=False,
                 max_new_tokens=1,
             ).cpu()
         output_ids = output_ids[:, len(encoded.input_ids[0]) :]
         completion = self.tokenizer.batch_decode(output_ids, skip_special_tokens=False)
         return completion
-

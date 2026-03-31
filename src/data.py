@@ -41,7 +41,7 @@ def normalize_harmbench_record(record: dict[str, Any], idx: int) -> HarmBenchExa
 
 def load_harmbench_subset(
     dataset_name: str,
-    dataset_config: str | None,
+    dataset_config: str | None, 
     split: str,
     train_size: int,
     val_size: int,
@@ -50,6 +50,9 @@ def load_harmbench_subset(
 ) -> tuple[list[HarmBenchExampleRow], list[HarmBenchExampleRow], pd.DataFrame]:
     
     ds = load_dataset(dataset_name, name=dataset_config, split=split, token=hf_token)
+    # dataset_dict = load_dataset(walledai/HarmBench, name=standard, split=train, token=hf_token)
+    # train_df = dataset_dict['train'].to_pandas()
+
 
     total_needed = train_size + val_size
     if len(ds) < total_needed:
@@ -83,16 +86,3 @@ def build_gepa_prompt_dataset(
     if not val:
         val = train[: min(max(min_val_examples, 1), len(train))]
     return train, val
-
-
-def to_gepa_train_val(
-    prompts: list[str],
-    train_ratio: float = 0.7,
-    min_val_examples: int = 1,
-) -> tuple[list[GepaExampleRow], list[GepaExampleRow]]:
-    """Adapter utility that converts prompt list to GEPA train/val examples."""
-    return build_gepa_prompt_dataset(
-        prompts=prompts,
-        train_ratio=train_ratio,
-        min_val_examples=min_val_examples,
-    )
