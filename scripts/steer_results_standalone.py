@@ -293,6 +293,7 @@ def parse_args():
 
 
 def load_config(config_path):
+    """Standalone schema (evaluator/target blocks); not ``shared_generation`` — use `runs.vector_steering_baseline` via `vector_steering_baseline.py` for unified config."""
     with open(config_path, "r") as f:
         return yaml.safe_load(f)
 

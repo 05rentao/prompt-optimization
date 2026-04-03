@@ -80,7 +80,7 @@ def _policy_sample(
     adversary_session: GenerationSession,
     messages: list[dict[str, str]],
     device: str,
-    max_new_tokens: int = 120,
+    max_new_tokens: int = 120,  # Callers pass ``runs.*`` / ``shared_generation.sampling`` values from config.
     temperature: float = 0.7,
     top_p: float = 0.9,
     max_length: int = 2048,

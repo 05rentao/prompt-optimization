@@ -61,7 +61,7 @@ class UnslothAdversaryRuntime(LoRABridge):
         self,
         messages: list[dict[str, str]],
         device: str,
-        max_new_tokens: int = 256,
+        max_new_tokens: int = 256,  # Run entrypoints pass YAML-derived limits; these are library fallbacks.
         temperature: float = 0.7,
         top_p: float = 0.9,
         max_length: int = 2048,

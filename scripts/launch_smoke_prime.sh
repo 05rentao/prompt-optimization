@@ -2,6 +2,7 @@
 set -euo pipefail
 
 # Launch minimal-budget smoke tests. Config from configs/smoke.yaml or smoke_eval.yaml.
+# Exports PROMPT_OPT_CONFIG_PATH so nested scripts/launch_unified_prime.sh and Python see smoke YAML (shared_generation + runs.*).
 #
 # Examples:
 #   bash scripts/launch_smoke_prime.sh

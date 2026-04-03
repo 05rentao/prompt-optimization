@@ -57,10 +57,10 @@ Most scripts should follow this order:
 ### 4) Run existing scripts locally
 
 ```bash
-uv run runs/gepa_run.py --help
-uv run runs/coev_run.py --help
-uv run runs/coev_v2_run.py --help
-uv run runs/adversary_run.py --help
+uv run python runs/gepa_run.py --help
+uv run python runs/coev_run.py --help
+uv run python runs/coev_v2_run.py --help
+uv run python runs/adversary_run.py --help
 ```
 
 ### 5) Best way to run scripts
@@ -69,15 +69,16 @@ Use `configs/default.yaml` as the source of truth (model IDs, reflection endpoin
 
 ```bash
 # Recommended: use the unified wrapper (details in docs/getting-started.md).
-uv run scripts/run_unified_experiment.py --mode gepa
-uv run scripts/run_unified_experiment.py --mode coev
-uv run scripts/run_unified_experiment.py --mode coev_v2
+uv run python scripts/run_unified_experiment.py --mode gepa
+uv run python scripts/run_unified_experiment.py --mode coev_v2
+uv run python scripts/run_unified_experiment.py --mode coev_v2_rloo
 
 # Direct script runs (when developing one pipeline):
-uv run runs/gepa_run.py
-uv run runs/coev_run.py --mode reinforce
-uv run runs/coev_v2_run.py --mode coev
-uv run runs/adversary_run.py --mode train
+uv run python runs/gepa_run.py
+uv run python runs/coev_run.py --mode reinforce
+uv run python runs/coev_v2_run.py --mode coev
+uv run python runs/coev_v2_run.py --mode coev --adversary-policy rloo
+uv run python runs/adversary_run.py --mode train
 ```
 
 ### 6) Minimal runtime wiring example
@@ -273,7 +274,7 @@ Single runtime composition entrypoint:
 ### CoEV v2 path (`runs/coev_v2_run.py`)
 1. Parse run config and resolve device.
 2. Build adversary/target/judge sessions plus reflection gateway.
-3. Run staged REINFORCE updates.
+3. Run staged REINFORCE or RLOO updates (optional rejection sampling, multi-query rewards).
 4. Run dual-role GEPA optimization at stage boundaries.
 5. Re-evaluate and save full artifacts + `RunManifest`.
 
@@ -281,7 +282,7 @@ Single runtime composition entrypoint:
 1. Parse run config and resolve device.
 2. Build adversary/target/judge sessions via `RuntimeCatalog`.
 3. Load HarmBench train/val data.
-4. Fine-tune adversary weights with REINFORCE from model judgment rewards.
+4. Fine-tune adversary weights with policy-gradient (`src/runtime/policy_gradient.py`: REINFORCE, RLOO, or rejection sampling).
 5. Evaluate on held-out prompts and save artifacts + `RunManifest`.
 
 ## Implementation Guidance
@@ -295,7 +296,7 @@ Single runtime composition entrypoint:
 ### Example CoEV v2 invocation
 
 ```bash
-uv run runs/coev_v2_run.py \
+uv run python runs/coev_v2_run.py \
   --mode coev \
   --dataset-name walledai/HarmBench \
   --max-metric-calls 80 \

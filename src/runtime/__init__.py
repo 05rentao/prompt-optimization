@@ -12,7 +12,13 @@ from .config import (
     TargetModelConfig,
     UnslothAdversaryConfig,
 )
-from .defaults import build_config_snapshot, load_default_config, resolve_config_path
+from .defaults import (
+    apply_shared_generation_defaults,
+    build_config_snapshot,
+    deep_merge_runs,
+    load_default_config,
+    resolve_config_path,
+)
 from .target_factory import (
     build_local_hf_target_session,
     build_reflection_gateway_for_defaults,
@@ -62,6 +68,8 @@ __all__ = [
     "run_gepa_prompt_optimization",
     "run_dual_role_gepa_prompt_optimization",
     "load_default_config",
+    "apply_shared_generation_defaults",
+    "deep_merge_runs",
     "build_config_snapshot",
     "resolve_config_path",
     "build_vllm_target_session",

@@ -67,30 +67,32 @@ For fuller run mode details and setup guidance, use `docs/getting-started.md`.
 
 ```bash
 # GEPA prompt optimization
-uv run runs/gepa_run.py
+uv run python runs/gepa_run.py
 
 # CoEV baseline runner
-uv run runs/coev_run.py --mode reinforce
-uv run runs/coev_run.py --mode gepa
-uv run runs/coev_run.py --mode eval
+uv run python runs/coev_run.py --mode reinforce
+uv run python runs/coev_run.py --mode gepa
+uv run python runs/coev_run.py --mode eval
 
-# CoEV v2 (staged REINFORCE + dual-role GEPA)
-uv run runs/coev_v2_run.py --mode coev
-uv run runs/coev_v2_run.py --mode eval
+# CoEV v2 (staged REINFORCE or RLOO + dual-role GEPA)
+uv run python runs/coev_v2_run.py --mode coev
+uv run python runs/coev_v2_run.py --mode coev --adversary-policy rloo
+uv run python runs/coev_v2_run.py --mode eval
 ```
 
 ### Unified wrapper (recommended for team usage)
 
 ```bash
-uv run scripts/run_unified_experiment.py --mode gepa
-uv run scripts/run_unified_experiment.py --mode coev
-uv run scripts/run_unified_experiment.py --mode coev_v2
+uv run python scripts/run_unified_experiment.py --mode gepa
+uv run python scripts/run_unified_experiment.py --mode coev_v2
+uv run python scripts/run_unified_experiment.py --mode coev_v2_rloo
 ```
 
 ## Logic check summary (current)
 
 - `runs/gepa_run.py`: target and reflection share the vLLM HTTP endpoint; evaluation and budget knobs stay in CLI.
 - `runs/coev_run.py` / `runs/adversary_run.py`: target via vLLM (same URL as `runtime.reflection`); launch scripts must export `REFLECTION_VLLM_BASE_URL` when not using defaults.
+- `runs/coev_v2_run.py` / `runs/adversary_run.py`: adversary policy-gradient steps are shared via `src/runtime/policy_gradient.py` (REINFORCE, RLOO, rejection sampling).
 - `runs/coev_v2_run.py`: same as GEPA for target + reflection.
 - `runs/vector_steering_baseline.py`: local HF target only (steering vectors).
 

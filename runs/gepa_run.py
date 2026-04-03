@@ -13,12 +13,18 @@ Target generation uses the same OpenAI-compatible vLLM server as GEPA reflection
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+# Repo root on sys.path when invoked as `python runs/gepa_run.py` (default sys.path is `runs/`).
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 import argparse
 import random
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 import numpy as np
