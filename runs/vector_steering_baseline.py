@@ -4,6 +4,7 @@
 Unlike other `runs/` entrypoints, this script **loads the target model locally**
 (see `runs.vector_steering_baseline.target_inference: local_hf` in config) so it
 can access weights for steering. All other runners use HTTP target inference via vLLM.
+Local inference uses ``src.runtime.sessions.build_local_hf_target_session`` (see ``local_runtimes``).
 """
 
 from __future__ import annotations
@@ -82,11 +83,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--results-csv-name", default=run_defaults["results_csv_name"])
     parser.add_argument("--summary-json-name", default=run_defaults["summary_json_name"])
     return parser.parse_args()
-
-
-def load_target_model(cfg: TargetModelConfig) -> GenerationSession:
-    """Create the local HF target-model generation session (requires weights for steering)."""
-    return build_local_hf_target_session(cfg)
 
 
 def _extract_question_stem(question: str) -> str:
@@ -304,7 +300,7 @@ def main() -> None:
 
     print(f"Loading target model: {args.target_model_name}")
     target_cfg = TargetModelConfig(model_id=args.target_model_name, max_new_tokens=args.max_new_tokens)
-    target_session = load_target_model(target_cfg)
+    target_session = build_local_hf_target_session(target_cfg)
     target_model = target_session.runtime.model
     target_tokenizer = target_session.runtime.tokenizer
 

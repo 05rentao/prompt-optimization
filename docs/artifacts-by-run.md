@@ -2,7 +2,7 @@
 
 Quick reference for what each runner writes under `results_dir`. Use this to compare runs, debug GEPA, or wire dashboards.
 
-**`run_manifest.json`** (all runners below) includes a **`config_snapshot`** object: which YAML was loaded (`PROMPT_OPT_CONFIG_PATH` or `configs/default.yaml`), effective reflection base URL and related env flags (no API key values), and **`cli_args`** — the resolved argparse values (defaults from merged YAML are already applied where the script wires them). The full YAML is **not** embedded.
+**`run_manifest.json`** (all runners below) includes a **`config_snapshot`** object: which YAML was loaded (`PROMPT_OPT_CONFIG_PATH` or `configs/default.yaml`), effective reflection base URL and related env flags (no API key values), and **`cli_args`** — the resolved argparse values (defaults from merged YAML are already applied; active scripts use **`patch_run_args_from_config`** so reflection URL/key on `args` match env + YAML). The full YAML is **not** embedded.
 
 **Effective prompts and decoding:** At load time, `load_default_config()` merges the top-level **`shared_generation`** block (seed attacker instruction, target system prompt, sampling limits, eval thresholds) into each **`runs.<name>`** section. Per-run keys in the file still override those defaults. So manifests reflect **CLI-resolved** values, which ultimately trace back to that merged tree unless you passed explicit CLI overrides.
 

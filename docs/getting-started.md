@@ -27,15 +27,17 @@ At a high level, scripts use HarmBench prompts, run target/adversary/judge flows
 For consistency, run scripts follow the same top-level phase ordering:
 
 1. `parse_args()` + load defaults via `load_default_config()` (merges `shared_generation` into `runs.*`; see §7)
-2. `resolve_device(...)` + build `EvaluationConfig`
-3. build long-lived runtime sessions (`RuntimeCatalog`)
-4. load data via `load_harmbench_subset(...)` and slice prompts
-5. baseline evaluation
-6. optimization loop (or eval-only mode)
-7. final evaluation
-8. save artifacts + `run_manifest.json`
+2. **`patch_run_args_from_config(defaults, args, run=...)`** (`src/runtime/sessions.py`) on **GEPA, CoEV v2, and adversary** runs — attaches YAML model ids + `runtime_profile` + effective reflection URL/key (after `REFLECTION_VLLM_*` env overrides) for manifests. Legacy **`coev_run.py`** does not use this helper.
+3. `resolve_device(...)` + build `EvaluationConfig`
+4. Build sessions: **`build_vllm_stack(defaults)`** returns `(target_session, reflection_gateway)` for GEPA and CoEV v2; adversary uses **`build_vllm_target_session`** + **`RuntimeCatalog`** for adversary/judge; vector steering uses **`build_local_hf_target_session`**
+5. **`OpenAIReflectionGateway.verify(model_name)`** — minimal chat completion (retries for vLLM warm-up); optional **`smoke_test`**
+6. load data via `load_harmbench_subset(...)` and slice prompts
+7. baseline evaluation
+8. optimization loop (or eval-only mode)
+9. final evaluation
+10. save artifacts + `run_manifest.json`
 
-This is the expected pattern when inspecting `runs/`.
+This is the expected pattern when inspecting `runs/`. **Authoritative runtime detail:** `src/runtime/README.md`.
 
 ## 3) Run types and how they differ
 
@@ -392,7 +394,7 @@ Top-level responsibilities:
 
 - `runs/` owns orchestration: CLI args, phase ordering, logging, artifact naming.
 - `src/` owns reusable implementation: data loading, scoring, artifact helpers, runtime wrappers, GEPA helpers.
-- `src/runtime/` owns backend-specific adapters behind stable interfaces.
+- `src/runtime/` owns backend-specific adapters behind stable interfaces. **Full module map and APIs:** `src/runtime/README.md`. **Optional logic vs plumbing (where to edit):** root **`README.md`** (Contributing section).
 
 Primary consumer scripts:
 
@@ -405,10 +407,11 @@ Primary consumer scripts:
 Main modularity components:
 
 - `src/runtime/`
-  - runtime session builders (`RuntimeCatalog`)
-  - target/adversary/judge/reflection implementations
-  - shared evaluation (`evaluate_outputs`, `evaluate_examples`)
-  - GEPA optimization helpers
+  - session builders (`RuntimeCatalog`, `build_vllm_target_session`, `build_vllm_stack`, `patch_run_args_from_config`, unified reflection URL resolution in `sessions.py`)
+  - HTTP vLLM clients (`openai_http.py`: `OpenAIChatTargetRuntime`, `OpenAIReflectionGateway` — `verify` uses chat completion, not `GET /v1/models`)
+  - target/adversary/judge local backends (`local_runtimes.py`)
+  - shared evaluation (`evaluate_outputs`, `evaluate_examples`; judge vs heuristic `mean_refusal_score` handling)
+  - GEPA optimization helpers (`gepa_prompt_optimization.py`)
 - `src/data.py`
   - HarmBench subset loading and split shaping
 - `src/artifacts.py`
@@ -435,7 +438,7 @@ Main modularity components:
 - Standardize CSV column names across runs (for example `target_response` vs `target_resp`) for easier downstream analysis.
 - Shared defaults for prompts and decoding are centralized under `shared_generation` and merged into `runs.*` at load time; per-run YAML or CLI still overrides when needed.
 - Unify artifact writers so every run emits a minimal common contract: `metrics.json`, `baseline.csv`, `final.csv`, and `run_manifest.json`.
-- Move reflection endpoint verification/setup into a shared bootstrap helper used by GEPA-capable runs.
+- Reflection bootstrap is centralized in **`build_vllm_stack`**, **`patch_run_args_from_config`**, and **`OpenAIReflectionGateway.verify`**; further unification would be optional convenience only.
 
 ## 12) Minimal command cheat sheet
 

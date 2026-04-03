@@ -51,18 +51,17 @@ from src.runtime import (
     GenerationSession,
     GepaPromptOptimizationConfig,
     HarmbenchJudgeConfig,
+    OpenAIReflectionGateway,
     RuntimeCatalog,
-    build_reflection_gateway_for_defaults,
-    build_vllm_target_session,
+    build_vllm_stack,
     cap_thread_workers,
     evaluate_outputs,
-    resolve_reflection_env_overrides,
+    patch_run_args_from_config,
     run_gepa_prompt_optimization,
     resolve_hf_token,
     timed_target_generate,
 )
 from src.runtime.defaults import build_config_snapshot, load_default_config
-from src.runtime.openai_reflection_gateway import OpenAIReflectionGateway
 from src.types import RunManifest
 
 
@@ -220,26 +219,12 @@ def parse_args(defaults: dict[str, Any]) -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _patch_args_from_yaml(args: argparse.Namespace, defaults: dict[str, Any]) -> None:
-    """Attach runtime/model fields from YAML (exposed as args.* for manifest/metrics)."""
-    args.runtime_profile = defaults["global"]["runtime_profile"]
-    models = defaults["runtime"]["models"]
-    args.target_model_name = models["target_model_name"]
-    args.reflection_model_name = models["reflection_model_name"]
-    rw_url, rw_key = resolve_reflection_env_overrides(defaults)
-    args.reflection_vllm_base_url = rw_url
-    args.reflection_vllm_api_key = rw_key
-
-
-def _build_eval_context(args: argparse.Namespace, defaults: dict[str, Any], device: str) -> EvalContext:
-    target_session = build_vllm_target_session(defaults)
+def _judge_session_for_gepa_eval(args: argparse.Namespace, defaults: dict[str, Any]) -> GenerationSession | None:
+    """HarmBench judge session when ``eval_method == judge``."""
+    if args.eval_method != "judge":
+        return None
     judge_model_id = defaults["runtime"]["models"]["judge_model_id"]
-    judge_session = (
-        RuntimeCatalog.build_judge_session(HarmbenchJudgeConfig(model_id=judge_model_id))
-        if args.eval_method == "judge"
-        else None
-    )
-    return EvalContext(target_session=target_session, judge_session=judge_session, device=device)
+    return RuntimeCatalog.build_judge_session(HarmbenchJudgeConfig(model_id=judge_model_id))
 
 
 def verify_reflection_client(reflection_gateway: OpenAIReflectionGateway, reflection_model_name: str) -> None:
@@ -410,7 +395,7 @@ def main() -> None:
     """Run full GEPA pipeline: load data, optimize, evaluate, and save outputs."""
     defaults = load_default_config()
     args = parse_args(defaults)
-    _patch_args_from_yaml(args, defaults)
+    patch_run_args_from_config(defaults, args, run="gepa")
 
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     eval_cfg = EvaluationConfig(
@@ -423,8 +408,12 @@ def main() -> None:
     np.random.seed(args.seed)
     sns.set_theme(style="whitegrid")
 
-    ctx = _build_eval_context(args, defaults, device)
-    reflection_gateway = build_reflection_gateway_for_defaults(defaults)
+    target_session, reflection_gateway = build_vllm_stack(defaults)
+    ctx = EvalContext(
+        target_session=target_session,
+        judge_session=_judge_session_for_gepa_eval(args, defaults),
+        device=device,
+    )
     verify_reflection_client(reflection_gateway, args.reflection_model_name)
 
     hf_token = resolve_hf_token()

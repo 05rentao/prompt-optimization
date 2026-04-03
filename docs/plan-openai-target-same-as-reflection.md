@@ -2,7 +2,7 @@
 
 This document describes a **planned** architectural change: serve **defender / target** completions via the **same OpenAI-compatible vLLM endpoint** already used for **GEPA reflection**, instead of loading a **second** full model with `LocalHFChatRuntime` in the training process.
 
-**Status:** **implemented** in the main codebase: target generation for GEPA/CoEV/adversary runs uses the same OpenAI-compatible vLLM endpoint as reflection (`build_vllm_target_session` in `src/runtime/target_factory.py`). The **exception** is `runs/vector_steering_baseline.py`, which keeps local HF weights (`runs.vector_steering_baseline.target_inference: local_hf`). This file remains useful background on motivations and experiment semantics.
+**Status:** **implemented** in the main codebase: target generation for GEPA/CoEV/adversary runs uses the same OpenAI-compatible vLLM endpoint as reflection (`build_vllm_target_session` in `src/runtime/sessions.py`). The **exception** is `runs/vector_steering_baseline.py`, which keeps local HF weights (`runs.vector_steering_baseline.target_inference: local_hf`). This file remains useful background on motivations and experiment semantics.
 
 ---
 
@@ -42,8 +42,8 @@ These motivated memory-related workarounds and clarify why “unify target + ref
 ### 2.2 Mitigations already applied (related files)
 
 - **`scripts/launch_coev_v2_rloo_prime.sh`:** Lower default `REFLECTION_GPU_UTIL` (e.g. **0.20**) so vLLM reserves less VRAM; export `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` before the Python run to reduce fragmentation OOMs.
-- **`src/runtime/harmbench_judge_runtime.py` + `HarmbenchJudgeConfig`:** Default **`load_in_4bit=True`** (NF4) for the judge; env **`JUDGE_LOAD_IN_4BIT=0`** forces legacy bf16 if needed.
-- **`src/runtime/catalog.py`:** Env override when building judge session.
+- **`src/runtime/local_runtimes.py` (`HarmbenchJudgeRuntime`) + `HarmbenchJudgeConfig`:** Default **`load_in_4bit=True`** (NF4) for the judge; env **`JUDGE_LOAD_IN_4BIT=0`** forces legacy bf16 if needed.
+- **`src/runtime/sessions.py` (`RuntimeCatalog`):** Env override when building judge session.
 
 ### 2.3 Logic bug (CoEV v2 RLOO runner)
 
@@ -55,7 +55,7 @@ These motivated memory-related workarounds and clarify why “unify target + ref
 
 ### 3.1 Target interface (stable seam)
 
-`src/runtime/interfaces.py` defines:
+`src/runtime/contracts.py` defines:
 
 - **`GenerationRequest`**: `system_prompt`, `user_prompt`, `max_new_tokens`, `temperature`, `top_p`.
 - **`TargetRuntime`**: `generate(self, request: GenerationRequest, device: str) -> str`.
@@ -65,12 +65,12 @@ These motivated memory-related workarounds and clarify why “unify target + ref
 
 ### 3.2 Local target today
 
-- **`src/runtime/local_hf_runtime.py` — `LocalHFChatRuntime`**: Loads `AutoModelForCausalLM` with optional `BitsAndBytesConfig` (`LocalHFConfig.use_4bit`), `device_map="auto"`.
-- **`src/runtime/catalog.py` — `RuntimeCatalog.build_target_session(LocalHFConfig)`** → `GenerationSession(LocalHFChatRuntime(cfg))`.
+- **`src/runtime/local_runtimes.py` — `LocalHFChatRuntime`**: Loads `AutoModelForCausalLM` with optional `BitsAndBytesConfig` (`LocalHFConfig.use_4bit`), `device_map="auto"`.
+- **`src/runtime/sessions.py` — `RuntimeCatalog.build_target_session(LocalHFConfig)`** → `GenerationSession(LocalHFChatRuntime(cfg))`.
 
 ### 3.3 Reflection today
 
-- **`src/runtime/openai_reflection_gateway.py` — `OpenAIReflectionGateway`**: `OpenAI` client to `OpenAIReflectionConfig.base_url` / `api_key`; `verify()`, `smoke_test()` via `client.chat.completions.create(...)`.
+- **`src/runtime/openai_http.py` — `OpenAIReflectionGateway`**: `OpenAI` client to `OpenAIReflectionConfig.base_url` / `api_key`; **`verify(model_name)`** runs a **minimal chat completion** (retries for vLLM startup) — no `GET /v1/models` catalog; assumes a **single** served model id matching config. **`smoke_test()`** uses `client.chat.completions.create(...)` with a short prompt.
 - GEPA code uses this for **reflection** only, not for scoring rollouts that need the “target” persona.
 
 ### 3.4 Config sources
@@ -111,7 +111,7 @@ Runners today call **`load_target_model(TargetModelConfig)`** → **`LocalHFConf
 - Add CLI/YAML flag, e.g. **`--target-backend {local_hf,openai}`** or **`target_backend: openai`** in `configs/default.yaml` under the relevant `runs.*` section.
 - When **`openai`**: build target from **`REFLECTION_VLLM_BASE_URL`** + **`reflection_model_name`** (or explicit `target_openai_model_name` if you want override without coupling).
 
-**Important:** Ensure **`reflection_gateway.verify(reflection_model_name)`** and any **smoke test** still run **before** heavy loops; optionally add a **target-specific** one-line generation smoke using the new runtime.
+**Important:** Ensure **`reflection_gateway.verify(reflection_model_name)`** and any **smoke test** still run **before** heavy loops. `verify` today is completion-based (see `src/runtime/openai_http.py`); optionally add a **target-specific** one-line generation smoke using the target runtime if you split servers.
 
 ---
 
@@ -121,11 +121,9 @@ Runners today call **`load_target_model(TargetModelConfig)`** → **`LocalHFConf
 
 | Area | Action |
 |------|--------|
-| **`interfaces.py`** | Usually **no change** if new class implements `TargetRuntime`. |
-| **`config.py`** | Add typed config: e.g. `TargetBackend = Literal["local_hf", "openai"]`, optional `OpenAITargetConfig` fields, or extend `LocalHFConfig` / new dataclass for OpenAI target. |
-| **`openai_reflection_gateway.py`** | Optionally extract shared **chat completion** helper used by `smoke_test` and new target runtime (avoid copy-paste). |
-| **New file** e.g. **`openai_target_runtime.py`** | Implement `OpenAIChatTargetRuntime(TargetRuntime)`. |
-| **`catalog.py`** | New builder or branch in `build_target_session`. |
+| **`contracts.py`** | Add typed config: e.g. `TargetBackend = Literal["local_hf", "openai"]`, optional `OpenAITargetConfig` fields, or extend `LocalHFConfig` / new dataclass for OpenAI target. |
+| **`openai_http.py`** | Shared **chat completion** helper, `OpenAIChatTargetRuntime`, `OpenAIReflectionGateway`. |
+| **`sessions.py` (`RuntimeCatalog`)** | New builder or branch in `build_target_session`. |
 | **`__init__.py`** | Export new config/types if part of public API. |
 
 ### 5.2 GEPA / CoEV (`src/runtime/gepa_prompt_optimization.py`)

@@ -4,15 +4,39 @@ from __future__ import annotations
 
 import json
 import os
+from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator, Mapping
 
 import yaml
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _DEFAULT_CONFIG_PATH = _REPO_ROOT / "configs" / "default.yaml"
 _CONFIG_ENV_VAR = "PROMPT_OPT_CONFIG_PATH"
+
+
+def resolve_hf_token() -> str:
+    """Resolve HF token from standard environment variable names."""
+    token = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_HUB_TOKEN")
+    if not token:
+        raise RuntimeError("Missing Hugging Face token. Set HF_TOKEN or HUGGINGFACE_HUB_TOKEN.")
+    return token
+
+
+@contextmanager
+def scoped_env(overrides: Mapping[str, str]) -> Iterator[None]:
+    """Temporarily apply environment variable overrides."""
+    previous = {key: os.environ.get(key) for key in overrides}
+    os.environ.update(overrides)
+    try:
+        yield
+    finally:
+        for key, old_value in previous.items():
+            if old_value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = old_value
 
 
 def resolve_config_path(path: Path | None = None) -> Path:
@@ -164,13 +188,13 @@ def build_config_snapshot(
     are captured in ``cli_args`` (after defaults are applied at parse time). The full
     YAML is not duplicated here.
 
-    ``defaults`` is only used for :func:`~src.runtime.target_factory.resolve_reflection_env_overrides`
+    ``defaults`` is only used for :func:`~src.runtime.sessions.resolve_reflection_env_overrides`
     so the snapshot records the effective reflection base URL.
 
     If ``cli_args`` is an :class:`argparse.Namespace`, it is JSON-serialized (with
     ``default=str`` for Path-like values) under ``cli_args``.
     """
-    from .target_factory import resolve_reflection_env_overrides
+    from .sessions import resolve_reflection_env_overrides
 
     resolved = resolve_config_path()
     base_url, _api_key = resolve_reflection_env_overrides(defaults)

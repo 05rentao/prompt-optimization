@@ -9,6 +9,7 @@ This module keeps the original workflow while removing notebook artifacts:
 
 Target generation uses the OpenAI-compatible vLLM endpoint from ``configs/default.yaml``
 (``runtime.reflection``); start vLLM before running or use ``scripts/launch_unified_prime.sh``.
+For CoEV v2 with dual-role GEPA and a single shared vLLM, use ``runs/coev_v2_run.py`` instead.
 """
 
 from __future__ import annotations
@@ -214,11 +215,6 @@ def load_adversary_model(cfg: ModelConfig) -> GenerationSession:
             lora_dropout=cfg.lora_dropout,
         )
     )
-
-
-def load_target_model(defaults: dict[str, Any]) -> GenerationSession:
-    """Build the frozen target session (OpenAI-compatible vLLM; see ``configs/default.yaml``)."""
-    return build_vllm_target_session(defaults)
 
 
 def load_harmbench_judge() -> GenerationSession:
@@ -979,7 +975,7 @@ def main() -> None:
     gepa_cfg.initial_attacker_instruction = selected_prompt
 
     adversary_session = load_adversary_model(adversary_cfg)
-    target_session = load_target_model(defaults)
+    target_session = build_vllm_target_session(defaults)
     judge_session = load_harmbench_judge()
     ctx = RunContext(
         adversary_session=adversary_session,

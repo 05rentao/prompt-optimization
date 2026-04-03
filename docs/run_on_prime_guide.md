@@ -309,6 +309,7 @@ rg --files -g "**/*metrics*.json" results
 |---|---|---|
 | `Unsupported MODE=...` | Invalid `MODE` env var passed to launcher | Use one of `gepa`, `coev_v2`, `coev_v2_rloo`, `adversary` |
 | Run hangs at reflection startup | Port conflict or vLLM failed to initialize | Check `logs/unified_reflection_vllm.log`, then kill stale processes and rerun |
+| Python fails at **`verify` / first completion** (`Cannot complete with reflection model ...`) | vLLM not ready, wrong `--served-model-name`, or `runtime.models.reflection_model_name` mismatch | Match YAML model id to vLLM; wait for launcher `/v1/models` or logs; see `src/runtime/openai_http.py` (`verify` retries chat completions) |
 | `HF` / dataset access errors | Token missing or model terms not accepted | Export `HF_TOKEN`, run access checks in section 3.5 |
 | CUDA OOM during reflection mode | Reflection model footprint too high for current settings | Reduce `REFLECTION_GPU_UTIL` (example `0.30`) or reduce model/context length |
 | CoEV v2/GEPA progress is very slow | Large `max_metric_calls`, long generations, or heavy reflection model | Lower `runs.*` budgets in YAML (`max_metric_calls`, `gepa_max_tokens`, `max_new_tokens`, etc.), or `shared_generation.sampling`, and/or use smoke launch first |

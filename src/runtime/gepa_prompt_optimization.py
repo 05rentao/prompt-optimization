@@ -14,8 +14,8 @@ from src.data import harmbench_to_gepa_examples
 from src.evaluators import compute_refusal_score, is_yes_verdict
 
 from .evaluation import EvaluationConfig
-from .interfaces import GenerationRequest, GenerationSession
-from .openai_reflection_gateway import OpenAIReflectionGateway
+from .contracts import GenerationRequest, GenerationSession
+from .openai_http import OpenAIReflectionGateway
 
 
 @dataclass
@@ -192,13 +192,10 @@ class GepaRefusalEvaluator:
             log_suffix = f"refusal_score={refusal_score:.2f}"
 
         if self.logger is not None:
-            try:
-                self.logger(
-                    f"input={user_prompt[:200]} | {log_suffix} | "
-                    f"latency_ms={elapsed_ms:.1f} | response={response[:200]}"
-                )
-            except Exception:
-                pass
+            self.logger(
+                f"input={user_prompt[:200]} | {log_suffix} | "
+                f"latency_ms={elapsed_ms:.1f} | response={response[:200]}"
+            )
 
         self.optimizer_trace.append(
             {

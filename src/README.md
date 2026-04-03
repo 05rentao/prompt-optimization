@@ -6,7 +6,7 @@ For onboarding and run commands, use:
 
 - `README.md` (project overview + quick start)
 - `docs/getting-started.md` (full setup and runbook)
-- `src/runtime/README.md` (runtime API reference)
+- `src/runtime/README.md` (runtime API reference); root **`README.md`** has **Contributing: optional logic vs plumbing**
 
 ## Overview
 
@@ -40,12 +40,13 @@ Use this when you want to stand up or modify a run script quickly.
 
 Most scripts should follow this order:
 
-1. `parse_args()` with all CLI flags.
-2. `resolve_device(...)`.
-3. Build long-lived runtime sessions via `RuntimeCatalog`.
-4. Load dataset via `load_harmbench_subset(...)`.
-5. Execute train/eval loop.
-6. Write artifacts and `RunManifest`.
+1. `parse_args()` with all CLI flags; `load_default_config()` for merged YAML.
+2. **`patch_run_args_from_config(...)`** (GEPA / CoEV v2 / adversary) where applicable.
+3. `resolve_device(...)`.
+4. Build long-lived runtime sessions: **`build_vllm_stack`** or **`RuntimeCatalog`** + **`build_vllm_target_session`** as appropriate (see `src/runtime/README.md`).
+5. Load dataset via `load_harmbench_subset(...)`.
+6. Execute train/eval loop.
+7. Write artifacts and `RunManifest`.
 
 ### 3) Reuse shared building blocks
 
@@ -204,7 +205,7 @@ if __name__ == "__main__":
 ### Common pitfalls to avoid
 
 - Building runtime sessions inside loops (slow and error-prone).
-- Adding model-specific branching in `runs/` instead of `src/runtime/catalog.py`.
+- Adding model-specific branching in `runs/` instead of `src/runtime/sessions.py` (`RuntimeCatalog`).
 - Reimplementing evaluation math instead of using shared evaluators.
 - Skipping `RunManifest` output (breaks downstream analysis consistency).
 
@@ -220,37 +221,22 @@ if __name__ == "__main__":
 
 ## `src/runtime/` File-by-File
 
-### `interfaces.py`
-Core protocol contracts:
-- `GenerationRequest`
-- `TargetRuntime`
-- `JudgeRuntime`
-- `ReflectionGateway`
-- `LoRABridge`
-- `GenerationSession`
+### `contracts.py`
+Runtime dataclasses and protocol contracts:
+- Config: `LocalHFConfig`, `TargetModelConfig`, `UnslothAdversaryConfig`, `HarmbenchJudgeConfig`, `OpenAIReflectionConfig`, `OpenAITargetConfig`, and related CoEV/GEPA config types
+- Protocols: `GenerationRequest`, `TargetRuntime`, `JudgeRuntime`, `ReflectionGateway`, `LoRABridge`, `GenerationSession`
 
-### `config.py`
-Runtime dataclasses used with `RuntimeCatalog`, including:
-- `LocalHFConfig`
-- `TargetModelConfig`
-- `UnslothAdversaryConfig`
-- `HarmbenchJudgeConfig`
-- `OpenAIReflectionConfig`
-
-### `catalog.py`
-Single runtime composition entrypoint:
-- `build_target_session(...)`
-- `build_adversary_session(...)`
-- `build_judge_session(...)`
-- `build_reflection_gateway(...)`
+### `sessions.py`
+Runtime composition and helpers:
+- `RuntimeCatalog`: `build_target_session`, `build_openai_target_session`, `build_adversary_session`, `build_judge_session`, `build_reflection_gateway`
+- YAML/env factories: `build_vllm_target_session`, `build_local_hf_target_session`, `build_reflection_gateway_for_defaults`, `resolve_reflection_env_overrides`, `resolve_target_backend`, `build_target_session_from_runtime`
+- Timed target batching: `timed_target_generate`, `cap_thread_workers`, `run_target_requests_ordered`
 
 ### Other runtime modules
 
-- `local_hf_runtime.py`: local Transformers target runtime.
-- `unsloth_adversary_runtime.py`: trainable Unsloth + LoRA adversary runtime.
-- `harmbench_judge_runtime.py`: HarmBench yes/no judge runtime.
-- `openai_reflection_gateway.py`: OpenAI-compatible reflection gateway.
-- `env.py`: `resolve_hf_token()` and `scoped_env(...)`.
+- `openai_http.py`: OpenAI-compatible HTTP target (`OpenAIChatTargetRuntime`), reflection gateway (`OpenAIReflectionGateway`), and shared `openai_chat_completion` helper.
+- `local_runtimes.py`: local Transformers target (`LocalHFChatRuntime`), HarmBench judge (`HarmbenchJudgeRuntime`), PEFT adversary (`UnslothAdversaryRuntime`).
+- `defaults.py`: YAML loading, `shared_generation` merge, `resolve_hf_token()`, `scoped_env(...)`.
 - `evaluation.py`: `EvaluationConfig`, `EvaluationResult`, `EvaluatedSample`, `EvaluationBatchResult`, `evaluate_outputs(...)`, `evaluate_examples(...)`.
 - `gepa_prompt_optimization.py`: GEPA optimization configs and run helpers (single-role and dual-role).
 

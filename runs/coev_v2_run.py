@@ -54,18 +54,17 @@ from src.runtime import (
     GenerationSession,
     HarmbenchJudgeConfig,
     ModelConfig,
+    OpenAIReflectionGateway,
     RuntimeCatalog,
     UnslothAdversaryConfig,
-    build_reflection_gateway_for_defaults,
-    build_vllm_target_session,
+    build_vllm_stack,
     cap_thread_workers,
     evaluate_outputs,
+    patch_run_args_from_config,
     resolve_hf_token,
-    resolve_reflection_env_overrides,
     timed_target_generate,
 )
 from src.runtime.defaults import build_config_snapshot, load_default_config
-from src.runtime.openai_reflection_gateway import OpenAIReflectionGateway
 from src.runtime.gepa_prompt_optimization import (
     DualRoleGepaContext,
     DualRoleGepaPromptOptimizationConfig,
@@ -660,18 +659,6 @@ def parse_args(defaults: dict[str, Any]) -> argparse.Namespace:
     return args
 
 
-def _patch_args_from_yaml(args: argparse.Namespace, defaults: dict[str, Any]) -> None:
-    """Attach runtime/model fields from YAML (still exposed as args.* for save_artifacts)."""
-    args.runtime_profile = defaults["global"]["runtime_profile"]
-    models = defaults["runtime"]["models"]
-    args.adversary_model_id = models["adversary_model_id"]
-    args.task_model_name = models["target_model_name"]
-    args.reflection_model_name = models["reflection_model_name"]
-    rw_url, rw_key = resolve_reflection_env_overrides(defaults)
-    args.reflection_vllm_base_url = rw_url
-    args.reflection_vllm_api_key = rw_key
-
-
 def _build_context(args: argparse.Namespace, defaults: dict[str, Any], device: str) -> RunContext:
     model_cfg = ModelConfig(model_id=args.adversary_model_id)
     adversary_cfg = UnslothAdversaryConfig(
@@ -682,13 +669,13 @@ def _build_context(args: argparse.Namespace, defaults: dict[str, Any], device: s
         lora_alpha=model_cfg.lora_alpha,
         lora_dropout=model_cfg.lora_dropout,
     )
-    reflection_gateway = build_reflection_gateway_for_defaults(defaults)
+    target_session, reflection_gateway = build_vllm_stack(defaults)
     reflection_gateway.verify(args.reflection_model_name)
     print("Reflection model smoke output:", reflection_gateway.smoke_test(args.reflection_model_name))
 
     return RunContext(
         adversary_session=RuntimeCatalog.build_adversary_session(adversary_cfg),
-        target_session=build_vllm_target_session(defaults),
+        target_session=target_session,
         judge_session=RuntimeCatalog.build_judge_session(HarmbenchJudgeConfig()),
         reflection_gateway=reflection_gateway,
         device=device,
@@ -1009,7 +996,7 @@ def main() -> None:
     """Run full CoEV v2 pipeline: train/evolve/evaluate and persist artifacts."""
     defaults = load_default_config()
     args = parse_args(defaults)
-    _patch_args_from_yaml(args, defaults)
+    patch_run_args_from_config(defaults, args, run="coev_v2")
 
     run_start = time.time()
     sns.set_theme(style="whitegrid")

@@ -57,8 +57,8 @@ from src.runtime import (
     build_vllm_target_session,
     cap_thread_workers,
     evaluate_outputs,
+    patch_run_args_from_config,
     resolve_hf_token,
-    resolve_reflection_env_overrides,
     timed_target_generate,
 )
 from src.runtime.defaults import build_config_snapshot, load_default_config
@@ -163,13 +163,15 @@ def _evaluation_result_to_metrics(ev: EvaluationResult, latency_ms_mean: float) 
     aggregate_score = ev.mean_refusal_score
     if aggregate_score is None:
         aggregate_score = ev.refusal_rate
-    return {
+    out: dict[str, float] = {
         "refusal_rate": float(ev.refusal_rate),
         "asr": float(ev.asr),
-        "mean_refusal_score": float(ev.mean_refusal_score or 0.0),
         "aggregate_score": float(aggregate_score),
         "latency_ms_mean": float(latency_ms_mean),
     }
+    if ev.mean_refusal_score is not None:
+        out["mean_refusal_score"] = float(ev.mean_refusal_score)
+    return out
 
 
 def evaluate_asr(
@@ -532,18 +534,6 @@ def parse_args(defaults: dict[str, Any]) -> argparse.Namespace:
     return args
 
 
-def _patch_args_from_yaml(args: argparse.Namespace, defaults: dict[str, Any]) -> None:
-    """Attach runtime/model fields from YAML (exposed as args.* for manifest/metrics)."""
-    args.runtime_profile = defaults["global"]["runtime_profile"]
-    models = defaults["runtime"]["models"]
-    args.adversary_model_id = models["adversary_model_id"]
-    args.task_model_name = models["target_model_name"]
-    args.judge_model_id = models["judge_model_id"]
-    rw_url, rw_key = resolve_reflection_env_overrides(defaults)
-    args.reflection_vllm_base_url = rw_url
-    args.reflection_vllm_api_key = rw_key
-
-
 def _build_context(args: argparse.Namespace, defaults: dict[str, Any], device: str) -> RunContext:
     model_cfg = ModelConfig(model_id=args.adversary_model_id)
     adversary_cfg = UnslothAdversaryConfig(
@@ -567,7 +557,7 @@ def main() -> None:
     run_start = time.time()
     defaults = load_default_config()
     args = parse_args(defaults)
-    _patch_args_from_yaml(args, defaults)
+    patch_run_args_from_config(defaults, args, run="adversary")
     sns.set_theme(style="whitegrid")
     run_defaults = defaults["runs"]["adversary"]
 
