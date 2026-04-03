@@ -88,6 +88,9 @@ class CoevTrainingLogRow(TypedDict):
     # Present when adversary REINFORCE uses batch_size > 1 (mean reward in `reward`).
     max_reward: NotRequired[float]
     batch_size: NotRequired[int]
+    adversary_policy: NotRequired[str]
+    target_queries: NotRequired[int]
+    rejection_sampling: NotRequired[bool]
 
 
 class CoevStageMetricRow(TypedDict, total=False):

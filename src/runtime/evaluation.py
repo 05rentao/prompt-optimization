@@ -7,7 +7,7 @@ from typing import Any, Callable, Iterable, Literal
 
 from src.evaluators import compute_refusal_score, is_yes_verdict
 
-from .interfaces import GenerationSession
+from .contracts import GenerationSession
 
 
 EvalMethod = Literal["heuristic", "judge"]
@@ -145,16 +145,21 @@ def evaluate_examples(
         cfg=cfg,
         judge_session=judge_session,
     )
+    # ``aggregate_score`` is optional convenience: heuristic runs expose a soft
+    # ``mean_refusal_score``; judge runs only have binary verdicts, so we use
+    # ``refusal_rate`` as the comparable scalar (not a second copy of the same thing).
     aggregate_score = eval_result.mean_refusal_score
     if aggregate_score is None:
         aggregate_score = eval_result.refusal_rate
-    metrics = {
+
+    metrics: dict[str, float] = {
         "refusal_rate": float(eval_result.refusal_rate),
         "asr": float(eval_result.asr),
-        "mean_refusal_score": float(eval_result.mean_refusal_score or 0.0),
         "aggregate_score": float(aggregate_score),
         "latency_ms_mean": float(sum(latencies_ms) / len(latencies_ms)) if latencies_ms else 0.0,
     }
+    if eval_result.mean_refusal_score is not None:
+        metrics["mean_refusal_score"] = float(eval_result.mean_refusal_score)
     return EvaluationBatchResult(
         eval_result=eval_result,
         aggregate_score=float(aggregate_score),

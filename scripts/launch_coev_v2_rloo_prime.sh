@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Prime launcher for runs/coev_v2_RLOO_run.py
+# Prime launcher for runs/coev_v2_run.py with --adversary-policy rloo
 #
 # What this script does:
 # 1) Ensures uv environment is available
@@ -10,6 +10,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
+export PYTHONPATH="${PYTHONPATH:-}:."
 
 # 8001 often conflicts on RunPod / shared hosts (proxy or stale bind). Override with REFLECTION_PORT if needed.
 REFLECTION_PORT="${REFLECTION_PORT:-8765}"
@@ -108,22 +109,18 @@ wait_for_vllm_reflection_port() {
 }
 
 # TCP can be open before vLLM serves OpenAI JSON; hosted envs may return HTML (e.g. proxy 502) until the backend is ready.
-# Use project venv Python (not "curl | uv run python"): piping into uv can be flaky; large models may need many minutes.
+# JSON checks use `uv run python` from repo root (same as run commands).
 wait_for_openai_models_json() {
   local port="$1"
   local name="$2"
   local timeout_s="${3:-900}"
   local waited=0
-  local py="${ROOT_DIR}/.venv/bin/python"
-  if [[ ! -x "${py}" ]]; then
-    py="uv run python"
-  fi
   echo "Waiting for ${name} OpenAI GET /v1/models JSON on :${port} (timeout ${timeout_s}s)..."
   echo "(Progress updates every ~3s; vLLM log snippet every 15s — see logs/coev_v2_rloo_reflection_vllm.log for full output.)"
   while [[ "${waited}" -lt "${timeout_s}" ]]; do
     local body
     body="$(curl -sS -m 30 -H "Authorization: Bearer EMPTY" "http://127.0.0.1:${port}/v1/models" 2>/dev/null || true)"
-    if echo "${body}" | "${py}" -c "
+    if echo "${body}" | (cd "${ROOT_DIR}" && uv run python -c "
 import json, sys
 raw = sys.stdin.read().strip()
 if not raw or raw.lstrip().startswith('<'):
@@ -132,12 +129,12 @@ d = json.loads(raw)
 if not isinstance(d.get('data'), list):
     sys.exit(1)
 sys.exit(0)
-" 2>/dev/null; then
+") 2>/dev/null; then
       echo "${name} OpenAI /v1/models is ready on :${port} (after ${waited}s)"
       return 0
     fi
     local hint
-    hint="$(echo "${body}" | "${py}" -c "
+    hint="$(echo "${body}" | (cd "${ROOT_DIR}" && uv run python -c "
 import json, sys
 raw = sys.stdin.read()
 s = raw.strip()
@@ -156,7 +153,7 @@ else:
             print('JSON has no data[] list; keys:', list(d.keys())[:8])
         else:
             print('valid JSON (unexpected in fail path)')
-" 2>/dev/null || echo 'could not classify response')"
+") 2>/dev/null || echo 'could not classify response')"
     printf '  [%3ss / %ss] %s\n' "${waited}" "${timeout_s}" "${hint}"
     if (( waited % 15 == 0 && waited > 0 )) && [[ -f logs/coev_v2_rloo_reflection_vllm.log ]]; then
       local logline
@@ -232,8 +229,8 @@ echo "Reflection OpenAI base URL (for coev run): ${REFLECTION_VLLM_BASE_URL}"
 # Reduces fragmentation OOMs when many models share one GPU (PyTorch 2.x).
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
-echo "Launching runs/coev_v2_RLOO_run.py..."
-RUN_CMD=(uv run python runs/coev_v2_RLOO_run.py)
+echo "Launching runs/coev_v2_run.py (--adversary-policy rloo)..."
+RUN_CMD=(uv run python runs/coev_v2_run.py --adversary-policy rloo)
 
 if [[ -n "${MODE:-}" ]]; then
   RUN_CMD+=(--mode "${MODE}")

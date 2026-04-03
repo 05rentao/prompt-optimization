@@ -15,9 +15,8 @@ Use this file as your first stop before changing code or launching experiments.
 This repo studies prompt safety and jailbreak robustness using these **active** run pipelines:
 
 - `runs/gepa_run.py` — GEPA prompt optimization (no adversary training)
-- `runs/coev_v2_run.py` — staged CoEV v2 (REINFORCE + dual-role GEPA); main staged pipeline
-- `runs/coev_v2_RLOO_run.py` — same staged structure as v2, with RLOO-style adversary updates instead of REINFORCE
-- `runs/adversary_run.py` — adversary-only fine-tuning
+- `runs/coev_v2_run.py` — staged CoEV v2 (REINFORCE or RLOO via `--adversary-policy`, optional rejection sampling / multi-query rewards / `--adversary-prompt` presets, plus dual-role GEPA); main staged pipeline
+- `runs/adversary_run.py` — adversary-only fine-tuning (REINFORCE, RLOO, or rejection sampling; `runs.adversary` in YAML)
 
 Legacy (not wired into `scripts/run_unified_experiment.py`): `runs/coev_run.py` (older CoEV modes). Run it directly if you need it.
 
@@ -27,16 +26,18 @@ At a high level, scripts use HarmBench prompts, run target/adversary/judge flows
 
 For consistency, run scripts follow the same top-level phase ordering:
 
-1. `parse_args()` + load defaults from `configs/default.yaml`
-2. `resolve_device(...)` + build `EvaluationConfig`
-3. build long-lived runtime sessions (`RuntimeCatalog`)
-4. load data via `load_harmbench_subset(...)` and slice prompts
-5. baseline evaluation
-6. optimization loop (or eval-only mode)
-7. final evaluation
-8. save artifacts + `run_manifest.json`
+1. `parse_args()` + load defaults via `load_default_config()` (merges `shared_generation` into `runs.*`; see §7)
+2. **`patch_run_args_from_config(defaults, args, run=...)`** (`src/runtime/sessions.py`) on **GEPA, CoEV v2, and adversary** runs — attaches YAML model ids + `runtime_profile` + effective reflection URL/key (after `REFLECTION_VLLM_*` env overrides) for manifests. Legacy **`coev_run.py`** does not use this helper.
+3. `resolve_device(...)` + build `EvaluationConfig`
+4. Build sessions: **`build_vllm_stack(defaults)`** returns `(target_session, reflection_gateway)` for GEPA and CoEV v2; adversary uses **`build_vllm_target_session`** + **`RuntimeCatalog`** for adversary/judge; vector steering uses **`build_local_hf_target_session`**
+5. **`OpenAIReflectionGateway.verify(model_name)`** — minimal chat completion (retries for vLLM warm-up); optional **`smoke_test`**
+6. load data via `load_harmbench_subset(...)` and slice prompts
+7. baseline evaluation
+8. optimization loop (or eval-only mode)
+9. final evaluation
+10. save artifacts + `run_manifest.json`
 
-This is the expected pattern when inspecting `runs/`.
+This is the expected pattern when inspecting `runs/`. **Authoritative runtime detail:** `src/runtime/README.md`.
 
 ## 3) Run types and how they differ
 
@@ -47,26 +48,22 @@ This is the expected pattern when inspecting `runs/`.
 
 ### CoEV v2 (`runs/coev_v2_run.py`) — main staged pipeline
 
-- Stage-based co-evolution: REINFORCE on adversary weights, dual-role GEPA for attacker/defense prompts, optional intra-stage eval, final eval, full artifacts (metrics, CSVs, traces, plots, `run_manifest.json`). Config: `runs.coev_v2` in YAML.
-
-### CoEV v2 RLOO (`runs/coev_v2_RLOO_run.py`)
-
-- Same staged layout and GEPA stages as v2; adversary policy updates use RLOO instead of REINFORCE. Shares `runs.coev_v2` defaults in config.
+- Stage-based co-evolution: REINFORCE or RLOO (`--adversary-policy`) on adversary weights; optional rejection sampling (`--rs-min-successes` / `--rs-budget`, REINFORCE-only); multi-query target reward (`--target-queries`); rewriter presets (`--adversary-prompt`); dual-role GEPA for attacker/defense prompts; optional intra-stage eval; final eval; full artifacts. Config: `runs.coev_v2` in YAML. Unified runner `--mode coev_v2_rloo` runs the same script with `--adversary-policy rloo` (manifest `mode`: `coev_v2_rloo`).
 
 ### Legacy CoEV (`runs/coev_run.py`)
 
-- Older notebook-style CoEV (`reinforce` / `gepa` / `eval`). Not exposed by the unified runner; invoke `uv run runs/coev_run.py ...` directly.
+- Older notebook-style CoEV (`reinforce` / `gepa` / `eval`). Not exposed by the unified runner; invoke `uv run python runs/coev_run.py ...` directly.
 
 ### Adversary-only run (`runs/adversary_run.py`)
 
 - Primary goal: train adversary weights only without GEPA. Use this script to evaluate ASR based on performance of adversary model as a baseline.
-- Core idea: baseline eval, adversary REINFORCE loop, final eval.
+- Core idea: baseline eval, policy-gradient loop (`--adversary-policy reinforce` or `rloo`, or rejection sampling when `--rs-min-successes` > 0), final eval. Former `adversary_run_rloo.py` is replaced by `--adversary-policy rloo`.
 
 ## 4) Compare and contrast
 
 - Shared: active runs share the same phase ordering (`parse_args` → sessions → data → eval loops → artifacts) and `src/` runtime modules.
-- Adversary training: `adversary_run.py`, `coev_v2_run.py` (REINFORCE), `coev_v2_RLOO_run.py` (RLOO); `gepa_run.py` does not train an adversary.
-- Prompt evolution: `gepa_run.py`, `coev_v2_run.py`, and `coev_v2_RLOO_run.py` use the GEPA optimization path; legacy `coev_run.py` has its own older GEPA stage wiring.
+- Adversary training: `adversary_run.py`, `coev_v2_run.py` (REINFORCE or RLOO); `gepa_run.py` does not train an adversary.
+- Prompt evolution: `gepa_run.py` and `coev_v2_run.py` use the GEPA optimization path; legacy `coev_run.py` has its own older GEPA stage wiring.
 - Reflection: GEPA-capable runs need an OpenAI-compatible reflection endpoint (`runtime.reflection`), often local vLLM.
 
 ## 5) Quick start options
@@ -110,12 +107,13 @@ Notes for Prime usage:
 Defaults come from YAML (`configs/default.yaml` unless overridden); add flags only when you need overrides.
 
 ```bash
-uv run runs/gepa_run.py
-uv run runs/coev_v2_run.py --mode coev
-uv run runs/coev_v2_RLOO_run.py --mode coev
-uv run runs/adversary_run.py --mode train
+uv run python runs/gepa_run.py
+uv run python runs/coev_v2_run.py --mode coev
+uv run python runs/coev_v2_run.py --mode coev --adversary-policy rloo
+uv run python runs/adversary_run.py --mode train
+uv run python runs/adversary_run.py --mode train --adversary-policy rloo
 # Legacy only:
-# uv run runs/coev_run.py --mode reinforce
+# uv run python runs/coev_run.py --mode reinforce
 ```
 
 ### Option D: Dedicated smoke launcher (no default config edits)
@@ -145,15 +143,15 @@ uv sync
 ### Running
 
 ```bash
-uv run runs/gepa_run.py --help
-uv run runs/coev_v2_run.py --help
-uv run runs/coev_v2_RLOO_run.py --help
-uv run runs/adversary_run.py --help
+uv run python runs/gepa_run.py --help
+uv run python runs/coev_v2_run.py --help
+uv run python runs/adversary_run.py --help
 
-uv run runs/gepa_run.py
-uv run runs/coev_v2_run.py --mode coev
-uv run runs/coev_v2_RLOO_run.py --mode coev
-uv run runs/adversary_run.py --mode train
+uv run python runs/gepa_run.py
+uv run python runs/coev_v2_run.py --mode coev
+uv run python runs/coev_v2_run.py --mode coev --adversary-policy rloo
+uv run python runs/adversary_run.py --mode train
+uv run python runs/adversary_run.py --mode train --adversary-policy rloo
 ```
 
 ### Notes on keys/endpoints
@@ -171,10 +169,10 @@ Before launching long runs, validate that your account/token can access required
 export HF_TOKEN=hf_xxx
 
 # 2) sanity check token works
-python3 -c "from huggingface_hub import whoami; print(whoami())"
+uv run python -c "from huggingface_hub import whoami; print(whoami())"
 
 # 3) verify core model repos used by defaults
-python3 - <<'PY'
+uv run python - <<'PY'
 from huggingface_hub import model_info
 models = [
     "unsloth/Qwen2.5-1.5B-Instruct",
@@ -200,6 +198,19 @@ If a model check fails, confirm:
 
 This section explains each config block in plain language.
 
+### `shared_generation` (unified defaults)
+
+The loader (`src/runtime/defaults.py` → `load_default_config()`) applies **`shared_generation`** first, then merges each **`runs.<name>`** section on top. **Override order:** `shared_generation` → `runs.<name>` in the file → CLI flags → `REFLECTION_VLLM_BASE_URL` / `REFLECTION_VLLM_API_KEY` for the OpenAI-compatible target/reflection server.
+
+Typical fields:
+
+- **`seed_attacker_instruction`**: canonical rewriter / attacker instruction used as the default for CoEV (eval + nested reinforce/gepa), CoEV v2, and adversary runs.
+- **`target_system_prompt`**: canonical “helpful assistant” string; feeds GEPA `baseline_system_prompt`, CoEV nested defense prompts, CoEV v2 `initial_defense_prompt`, adversary `target_system_prompt`, and vector steering `seed_prompt` unless overridden per run.
+- **`sampling`**: `adversary_max_new_tokens`, `target_max_new_tokens`, `target_temperature`, `gepa_max_tokens`, `gepa_temperature` — mapped into the per-run keys each script expects (`max_tokens` / `max_new_tokens` / `gepa_max_tokens`, etc.).
+- **`eval_thresholds`**: `refusal_threshold`, `asr_threshold` when you want them aligned across runs (per-run YAML can still override).
+
+Smoke configs (`configs/smoke.yaml`, `configs/smoke_eval.yaml`) define their own `shared_generation` (smaller budgets, stricter prompts). **`configs/prompt_reference.yaml`** stores historical prompt strings for documentation only; nothing imports it.
+
 ### 7.1 Swapability status (what is truly config-driven)
 
 Legend:
@@ -216,7 +227,8 @@ Legend:
 | `global.seed` | Easy swap | random seed integer | Used by all run scripts. |
 | `global.device` | Easy swap | `cuda`, `cpu`, or `null` for auto | Passed into runtime device resolution. |
 | `global.runtime_profile` | Partial/in progress | label string (for manifests/reporting) | Currently metadata/profile label, not a backend selector. |
-| `runtime.models.adversary_model_id` | Easy swap (within current backend) | Unsloth/HF model id or local path compatible with current Unsloth loader | Used by `coev_v2`, `coev_v2_RLOO`, and `adversary` runs. |
+| `shared_generation.*` | Easy swap | Canonical prompts + shared sampling/threshold defaults merged into `runs.*` | Applied by `load_default_config()` before run scripts read `runs.<name>`. |
+| `runtime.models.adversary_model_id` | Easy swap (within current backend) | Unsloth/HF model id or local path compatible with current Unsloth loader | Used by `coev_v2` / `coev_v2_rloo` unified modes and `adversary` runs. |
 | `runtime.models.target_model_name` | Easy swap | Must match the model served at `runtime.reflection` for HTTP target runs | Same id as `reflection_model_name` by default; victim completions go through vLLM except vector steering. |
 | `runtime.models.reflection_model_name` | Easy swap | model id served by the OpenAI-compatible endpoint (`--served-model-name`) | GEPA reflection, CoEV v2, and **target** HTTP generation (shared server). |
 | `runtime.models.judge_model_id` | Partial/in progress | Intended: HarmBench judge model id | Documented in config, but current judge construction still uses runtime defaults in scripts. |
@@ -226,8 +238,8 @@ Legend:
 | `runtime.legacy_target_vllm.api_key` | Deprecated/legacy | N/A in current active runs | Kept for legacy compatibility docs; not wired in current pipelines. |
 | `runs.gepa.*` | Easy swap | GEPA train/val size, budget, thresholds, prompt, result path | Active and wired in `runs/gepa_run.py`. |
 | `runs.coev.*` | Easy swap | Legacy CoEV knobs | Only `runs/coev_run.py`. |
-| `runs.coev_v2.*` | Easy swap | CoEV v2 / RLOO schedules, GEPA budgets, token limits, prompt seeds, output names | `runs/coev_v2_run.py` and `runs/coev_v2_RLOO_run.py`. |
-| `runs.adversary.*` | Easy swap | adversary training schedule, eval settings, instruction/prompt, output names | Active and wired in `runs/adversary_run.py`. |
+| `runs.coev_v2.*` | Easy swap | CoEV v2 / RLOO schedules, GEPA budgets, token limits, policy/RS knobs, output names | `runs/coev_v2_run.py` |
+| `runs.adversary.*` | Easy swap | adversary training schedule, `adversary_policy`, RS knobs, eval settings, instruction/prompt, output names | Active and wired in `runs/adversary_run.py`. |
 | `runs.vector_steering_baseline.target_inference` | Easy swap | `local_hf` (required for steering) | Only `vector_steering_baseline` loads target weights locally; value must stay `local_hf`. |
 | `scripts.unified_runner.run_kind` | Easy swap | `train` or `eval` — `eval` forces `coev_v2`, `coev_v2_rloo`, `adversary` sub-modes to eval | `scripts/run_unified_experiment.py`. |
 | `scripts.unified_runner.coev_v2_mode` | Easy swap | `coev` or `eval` | CoEV v2 script. |
@@ -274,21 +286,22 @@ Legend:
 ### `runs.vector_steering_baseline`
 
 - `target_inference`: must be `local_hf` so the script can read model weights for steering vectors.
+- `seed_prompt`, `max_new_tokens`, `temperature`: default from `shared_generation` (`target_system_prompt` / `sampling`) unless set under this run block.
 
 ### `runs.gepa`
 
 - `train_size`, `val_size`: HarmBench sample counts for optimization and validation.
 - `max_metric_calls`: GEPA evaluator budget.
-- `max_tokens`, `temperature`: target generation settings during GEPA/eval.
+- `max_tokens`, `temperature`: target generation settings during GEPA/eval (defaults usually come from `shared_generation.sampling` unless overridden here).
 - `eval_method`: `heuristic` or `judge`.
-- `refusal_threshold`, `asr_threshold`: scoring thresholds for refusal/ASR decisions.
-- `baseline_system_prompt`: initial defense prompt before optimization.
+- `refusal_threshold`, `asr_threshold`: scoring thresholds (defaults may come from `shared_generation.eval_thresholds`).
+- `baseline_system_prompt`: initial defense prompt before optimization (defaults from `shared_generation.target_system_prompt` unless overridden).
 - `results_dir`: output directory for GEPA artifacts.
 
 ### `runs.coev`
 
 - Base controls: `train_size`, `val_size`, `results_dir`, eval thresholds/method.
-- `eval_instruction`: default attacker rewrite instruction for eval paths.
+- `eval_instruction`: default attacker rewrite instruction for eval paths (defaults from `shared_generation.seed_attacker_instruction` unless overridden).
 - `reinforce.*`:
   - `iterations`, `lr`, `weight_decay`, `eval_every`
   - prompt slices (`train_slice_end`, `eval_slice_start`, `eval_slice_end`)
@@ -303,15 +316,16 @@ Legend:
 - Similar knobs to CoEV but for the v2 staged architecture.
 - Adds v2-specific fields:
   - `training_csv_name`
-  - `max_new_tokens`
+  - `max_new_tokens` (and, via merge, `gepa_max_tokens` / `gepa_temperature` aligned with `shared_generation.sampling` unless overridden)
   - GEPA controls (`max_metric_calls`, `gepa_max_tokens`, `gepa_temperature`)
-  - initial attacker/defense prompts
+  - `initial_attacker_instruction` / `initial_defense_prompt` (seeded from `shared_generation` unless overridden)
 
 ### `runs.adversary`
 
 - Controls adversary-only training:
   - dataset sizes, eval method/thresholds
-  - `attacker_instruction`, `target_system_prompt`
+  - `attacker_instruction`, `target_system_prompt` (defaults from `shared_generation` unless overridden)
+  - `adversary_policy` (`reinforce` | `rloo`), `rs_budget`, `rs_min_successes` (rejection sampling when `rs_min_successes` > 0)
   - `iterations`, `lr`, `weight_decay`, `eval_every`
   - slice windows and output CSV names
   - `max_new_tokens`
@@ -345,7 +359,7 @@ How to use them:
 #### `runs/adversary_run.py`
 
 - `adversary_run_metrics.json`
-- `eval_metrics_before_vs_after_training.csv` and per-example `eval_outputs_before_training.csv` / `eval_outputs_after_training.csv` (adversary **weights** before vs after REINFORCE; prompts are not optimized)
+- `eval_metrics_before_vs_after_training.csv` and per-example `eval_outputs_before_training.csv` / `eval_outputs_after_training.csv` (adversary **weights** before vs after training; prompts are not optimized)
 - `plot_eval_metrics_before_vs_after_training.png` (same comparison as the metrics CSV)
 - training CSV (`training_csv_name`, default from `configs/default.yaml`)
 - eval CSV (`eval_csv_name`, default from `configs/default.yaml`)
@@ -360,9 +374,9 @@ How to use them:
 - optional adapter directory from `--save-dir`
 - note: CSV paths come from config and may be outside `--results-dir` if configured that way
 
-#### `runs/coev_v2_run.py` and `runs/coev_v2_RLOO_run.py`
+#### `runs/coev_v2_run.py`
 
-- Same artifact shape: run config JSON, metrics JSON, CSV bundle (baseline/optimized, training log, traces, stage metrics), plots, `run_manifest.json`, optional `--save-dir` adapters.
+- Same artifact shape for REINFORCE and RLOO: run config JSON, metrics JSON, CSV bundle (baseline/optimized, training log, traces, stage metrics), plots, `run_manifest.json` (`mode` `coev_v2` or `coev_v2_rloo`), optional `--save-dir` adapters.
 
 #### `runs/gepa_run.py`
 
@@ -380,13 +394,12 @@ Top-level responsibilities:
 
 - `runs/` owns orchestration: CLI args, phase ordering, logging, artifact naming.
 - `src/` owns reusable implementation: data loading, scoring, artifact helpers, runtime wrappers, GEPA helpers.
-- `src/runtime/` owns backend-specific adapters behind stable interfaces.
+- `src/runtime/` owns backend-specific adapters behind stable interfaces. **Full module map and APIs:** `src/runtime/README.md`. **Optional logic vs plumbing (where to edit):** root **`README.md`** (Contributing section).
 
 Primary consumer scripts:
 
 - `runs/gepa_run.py`
 - `runs/coev_v2_run.py`
-- `runs/coev_v2_RLOO_run.py`
 - `runs/adversary_run.py`
 
 (`runs/coev_run.py` is legacy.)
@@ -394,10 +407,11 @@ Primary consumer scripts:
 Main modularity components:
 
 - `src/runtime/`
-  - runtime session builders (`RuntimeCatalog`)
-  - target/adversary/judge/reflection implementations
-  - shared evaluation (`evaluate_outputs`, `evaluate_examples`)
-  - GEPA optimization helpers
+  - session builders (`RuntimeCatalog`, `build_vllm_target_session`, `build_vllm_stack`, `patch_run_args_from_config`, unified reflection URL resolution in `sessions.py`)
+  - HTTP vLLM clients (`openai_http.py`: `OpenAIChatTargetRuntime`, `OpenAIReflectionGateway` — `verify` uses chat completion, not `GET /v1/models`)
+  - target/adversary/judge local backends (`local_runtimes.py`)
+  - shared evaluation (`evaluate_outputs`, `evaluate_examples`; judge vs heuristic `mean_refusal_score` handling)
+  - GEPA optimization helpers (`gepa_prompt_optimization.py`)
 - `src/data.py`
   - HarmBench subset loading and split shaping
 - `src/artifacts.py`
@@ -422,9 +436,9 @@ Main modularity components:
 
 - Centralize baseline/final evaluation scaffolding into one helper returning `(metrics, rows)` with a consistent schema.
 - Standardize CSV column names across runs (for example `target_response` vs `target_resp`) for easier downstream analysis.
-- Normalize CLI names for equivalent knobs (`max_tokens` vs `gepa_max_tokens`) and keep mode naming consistent in manifests.
+- Shared defaults for prompts and decoding are centralized under `shared_generation` and merged into `runs.*` at load time; per-run YAML or CLI still overrides when needed.
 - Unify artifact writers so every run emits a minimal common contract: `metrics.json`, `baseline.csv`, `final.csv`, and `run_manifest.json`.
-- Move reflection endpoint verification/setup into a shared bootstrap helper used by GEPA-capable runs.
+- Reflection bootstrap is centralized in **`build_vllm_stack`**, **`patch_run_args_from_config`**, and **`OpenAIReflectionGateway.verify`**; further unification would be optional convenience only.
 
 ## 12) Minimal command cheat sheet
 

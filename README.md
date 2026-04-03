@@ -1,6 +1,6 @@
 # STAT 4830 — Prompt Optimization Runs
 
-This repository contains four experiment pipelines under `runs/` that share a common flow:
+This repository contains several experiment pipelines under `runs/` that share a common flow:
 an adversary rewrites harmful prompts, a target model responds, and evaluation tracks ASR/refusal.
 Some runs only train adversary weights, while others optimize attacker/defense prompts with GEPA.
 
@@ -12,7 +12,7 @@ Use these docs in this order:
 2. `docs/getting-started.md`: full onboarding, setup, configuration, and runbook.
 3. `docs/run_on_prime_guide.md`: end-to-end Prime/H100 setup and launch guide.
 4. `src/README.md`: contributor guide for `src/` architecture and extension patterns.
-5. `src/runtime/README.md`: runtime APIs, contracts, and runtime-specific internals.
+5. `src/runtime/README.md`: **authoritative** runtime API reference (modules, `build_vllm_stack`, reflection `verify`, evaluation metrics). **Where to edit** experiment code vs shared plumbing: **Contributing** section below in this file.
 
 Backwards-compatible alias:
 - `getting_started.md` points to `docs/getting-started.md`.
@@ -22,16 +22,17 @@ Backwards-compatible alias:
 Use this map to quickly find where to work.
 
 Core project code and launch entrypoints:
-- `runs/`: experiment entry scripts (`gepa`, `coev`, `coev_v2`, `adversary`).
+- `runs/`: experiment entry scripts (`gepa`, `coev_v2`, `coev_v2_rloo` via unified runner, `adversary`; legacy `coev_run.py` kept for reference).
 - `src/`: shared library code used by all runs (data, evaluation, artifacts, runtime adapters).
 - `scripts/`: convenience wrappers for unified CLI and Prime/cluster launchers.
-- `configs/`: YAML config presets (`default.yaml`, `smoke.yaml`, `smoke_eval.yaml`).
+- `configs/`: YAML config presets (`default.yaml`, `smoke.yaml`, `smoke_eval.yaml`). Shared prompts and sampling defaults live under `shared_generation` and are merged into each `runs.<name>` block when you load config (see `src/runtime/defaults.py`). `configs/prompt_reference.yaml` lists legacy prompt strings for reference only (not loaded by code).
 - `data/`: local input datasets/resources used by runs.
 
 Documentation and project context:
 - `docs/`: user-facing guides, especially [Getting Started](docs/getting-started.md) and [Run on Prime](docs/run_on_prime_guide.md).
 - `README.md`: high-level orientation and quick command reference.
-- `notes/`: working notes, design docs, and planning material (non-critical for execution).
+- `notes/`: working notes, design docs, and planning material (non-critical for execution). See `notes/coev_v2_future_refactor.md` for policy-gradient modularization notes.
+- `tests/`: small **pytest** suite (no GPU): `test_shared_generation_config.py` exercises `shared_generation` merge in `src/runtime/defaults.py`; `test_policy_gradient.py` covers `src/runtime/policy_gradient.py`. Run from repo root: `uv run python -m pytest tests/ -q`.
 - `reports/`: course/report artifacts (for example `report.md` and presentation PDF).
 
 Run outputs and experiment artifacts:
@@ -52,10 +53,10 @@ Project metadata:
 # Install dependencies
 uv sync
 
-# Unified runner (recommended). Sub-modes and paths: configs/default.yaml → scripts.unified_runner
+# Unified runner (recommended). Sub-modes and paths: configs/default.yaml → shared_generation + runs.* → scripts.unified_runner
 uv run python scripts/run_unified_experiment.py --mode gepa
-uv run python scripts/run_unified_experiment.py --mode coev
 uv run python scripts/run_unified_experiment.py --mode coev_v2
+uv run python scripts/run_unified_experiment.py --mode coev_v2_rloo
 uv run python scripts/run_unified_experiment.py --mode adversary
 ```
 
@@ -63,8 +64,8 @@ Prime/cluster launcher:
 
 ```bash
 MODE=gepa bash scripts/launch_unified_prime.sh
-MODE=coev bash scripts/launch_unified_prime.sh
 MODE=coev_v2 bash scripts/launch_unified_prime.sh
+MODE=coev_v2_rloo bash scripts/launch_unified_prime.sh
 MODE=adversary bash scripts/launch_unified_prime.sh
 ```
 
@@ -72,23 +73,47 @@ MODE=adversary bash scripts/launch_unified_prime.sh
 
 For consistency, run scripts follow the same high-level phase order:
 
-1. `parse_args()` + load defaults from `configs/default.yaml`
-2. `resolve_device(...)` + build `EvaluationConfig`
-3. build long-lived runtime sessions via `RuntimeCatalog`
-4. load data via `load_harmbench_subset(...)` and slice prompts
-5. baseline evaluation
-6. optimization loop (or eval-only mode)
-7. final evaluation
-8. save artifacts + `run_manifest.json`
+1. `parse_args()` + load defaults via `load_default_config()` (`configs/default.yaml` or `PROMPT_OPT_CONFIG_PATH`), which merges `shared_generation` into each `runs.<name>` before argparse defaults are applied
+2. **`patch_run_args_from_config(...)`** on active pipelines (GEPA, CoEV v2, adversary) attaches `runtime_profile`, model ids from YAML, and effective reflection URL/key (`REFLECTION_VLLM_*` env overrides) onto the argparse namespace for manifests (legacy **`coev_run.py`** wires YAML fields inline)
+3. `resolve_device(...)` + build `EvaluationConfig`
+4. Build long-lived sessions: **`build_vllm_stack(defaults)`** where target + reflection gateway must stay paired (GEPA, CoEV v2), or **`build_vllm_target_session`** + adversary/judge via **`RuntimeCatalog`**
+5. **`OpenAIReflectionGateway.verify(...)`** uses a minimal chat completion on the configured model id (single local vLLM assumption); then optional **`smoke_test`**
+6. load data via `load_harmbench_subset(...)` and slice prompts
+7. baseline evaluation
+8. optimization loop (or eval-only mode)
+9. final evaluation
+10. save artifacts + `run_manifest.json`
 
-This is the expected shape when inspecting code in `runs/`.
+This is the expected shape when inspecting code in `runs/`. API details: **`src/runtime/README.md`**.
+
+## Contributing: optional logic vs plumbing
+
+Use this when deciding **where** a change belongs. The goal is to keep **experiment behavior** in easy-to-find places and **shared wiring** stable.
+
+### Prefer editing here (behavior, experiments, course deliverables)
+
+- **`runs/*.py`** — Stage schedules, argparse, training loops, when to call GEPA or policy-gradient steps, artifact paths, manifest fields. **Start here** for new run modes or different eval cadence.
+- **`configs/*.yaml`** and especially **`shared_generation`** — Prompts, budgets, thresholds, dataset sizes: most changes need **no Python** if keys already map through `load_default_config()`.
+- **`src/evaluators.py`**, **`src/run_pipeline.py`**, **`src/artifacts.py`** — Refusal heuristics, shared rewrite/reward helpers, CSV/plot/manifest writers used across runs.
+- **`src/runtime/gepa_prompt_optimization.py`** — GEPA-specific optimization **logic** (how candidates are scored, dual-role wiring) *after* you understand how it composes with `GenerationSession` and `OpenAIReflectionGateway`.
+
+### Treat as plumbing (wiring models, HTTP, env — change only with intent)
+
+These files coordinate **one** vLLM URL, **one** reflection client, and **consistent** manifests across runners. Casual edits here are likely to break multiple pipelines.
+
+- **`src/runtime/sessions.py`** — `build_vllm_target_session`, `build_vllm_stack`, `patch_run_args_from_config`, reflection URL helpers. Touch when **adding a backend** or fixing URL/env bugs, not for one-off experiment tweaks.
+- **`src/runtime/openai_http.py`** — Chat client, `OpenAIReflectionGateway.verify` / `smoke_test`. Run scripts depend on stable behavior at startup.
+- **`src/runtime/contracts.py`** and **`src/runtime/__init__.py`** — Public types and re-exports; renaming or reshaping types forces updates in **`runs/`** and tests.
+- **`src/runtime/defaults.py`** — `shared_generation` merge and `load_default_config`; changes affect **every** run’s effective YAML.
+
+**Rule of thumb:** If the change is “what we optimize” or “how we report results,” lean toward **`runs/`** + **config**. If it is “how HTTP talks to vLLM” or “how env overrides YAML,” it belongs in **`sessions.py`** / **`openai_http.py`** and should stay coordinated. Full module reference: **`src/runtime/README.md`**.
 
 ## Run overview
 
 ### `runs/adversary_run.py`
-- Purpose: adversary-only REINFORCE fine-tuning (no prompt optimization).
-- Pipeline shape: baseline -> train loop -> final eval -> artifacts.
-- Artifacts: metrics JSON + training CSV + eval CSV + manifest (+ optional LoRA adapter save).
+- Purpose: adversary-only policy-gradient fine-tuning (REINFORCE, RLOO, or rejection sampling via `--adversary-policy` / `--rs-min-successes`; no prompt optimization).
+- Pipeline shape: baseline → train loop → final eval → artifacts.
+- Artifacts: metrics JSON + training CSV + eval CSV + manifest (+ optional LoRA adapter save). Shared update math: `src/runtime/policy_gradient.py`.
 
 ### `runs/coev_run.py`
 - Purpose: legacy CoEV runner with `reinforce`, `gepa`, or `eval` mode.
@@ -96,9 +121,10 @@ This is the expected shape when inspecting code in `runs/`.
 - Artifacts: mode-specific CSV logs + manifest (+ optional LoRA adapter save).
 
 ### `runs/coev_v2_run.py`
-- Purpose: staged CoEV pipeline combining REINFORCE updates with dual-role GEPA.
-- Pipeline shape: baseline eval -> staged training/evolution -> final eval -> artifact bundle.
-- Artifacts: metrics JSON, comparison/trace/stage CSVs, plots, manifest (+ optional LoRA adapter save).
+- Purpose: staged CoEV with REINFORCE or RLOO adversary updates, optional rejection sampling and multi-query rewards, named `--adversary-prompt` presets, and dual-role GEPA (`runs.coev_v2` in YAML).
+- Use `--adversary-policy rloo` for the former separate RLOO entrypoint (unified runner: `--mode coev_v2_rloo`).
+- Pipeline shape: baseline eval → staged training/evolution → final eval → artifact bundle.
+- Artifacts: metrics JSON, comparison/trace/stage CSVs, plots, manifest (+ optional LoRA adapter save); `run_manifest.json` uses `mode` `coev_v2` or `coev_v2_rloo` by policy.
 
 ### `runs/gepa_run.py`
 - Purpose: GEPA-only system prompt optimization for defense behavior.

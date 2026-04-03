@@ -6,7 +6,7 @@ For onboarding and run commands, use:
 
 - `README.md` (project overview + quick start)
 - `docs/getting-started.md` (full setup and runbook)
-- `src/runtime/README.md` (runtime API reference)
+- `src/runtime/README.md` (runtime API reference); root **`README.md`** has **Contributing: optional logic vs plumbing**
 
 ## Overview
 
@@ -40,12 +40,13 @@ Use this when you want to stand up or modify a run script quickly.
 
 Most scripts should follow this order:
 
-1. `parse_args()` with all CLI flags.
-2. `resolve_device(...)`.
-3. Build long-lived runtime sessions via `RuntimeCatalog`.
-4. Load dataset via `load_harmbench_subset(...)`.
-5. Execute train/eval loop.
-6. Write artifacts and `RunManifest`.
+1. `parse_args()` with all CLI flags; `load_default_config()` for merged YAML.
+2. **`patch_run_args_from_config(...)`** (GEPA / CoEV v2 / adversary) where applicable.
+3. `resolve_device(...)`.
+4. Build long-lived runtime sessions: **`build_vllm_stack`** or **`RuntimeCatalog`** + **`build_vllm_target_session`** as appropriate (see `src/runtime/README.md`).
+5. Load dataset via `load_harmbench_subset(...)`.
+6. Execute train/eval loop.
+7. Write artifacts and `RunManifest`.
 
 ### 3) Reuse shared building blocks
 
@@ -57,10 +58,10 @@ Most scripts should follow this order:
 ### 4) Run existing scripts locally
 
 ```bash
-uv run runs/gepa_run.py --help
-uv run runs/coev_run.py --help
-uv run runs/coev_v2_run.py --help
-uv run runs/adversary_run.py --help
+uv run python runs/gepa_run.py --help
+uv run python runs/coev_run.py --help
+uv run python runs/coev_v2_run.py --help
+uv run python runs/adversary_run.py --help
 ```
 
 ### 5) Best way to run scripts
@@ -69,15 +70,16 @@ Use `configs/default.yaml` as the source of truth (model IDs, reflection endpoin
 
 ```bash
 # Recommended: use the unified wrapper (details in docs/getting-started.md).
-uv run scripts/run_unified_experiment.py --mode gepa
-uv run scripts/run_unified_experiment.py --mode coev
-uv run scripts/run_unified_experiment.py --mode coev_v2
+uv run python scripts/run_unified_experiment.py --mode gepa
+uv run python scripts/run_unified_experiment.py --mode coev_v2
+uv run python scripts/run_unified_experiment.py --mode coev_v2_rloo
 
 # Direct script runs (when developing one pipeline):
-uv run runs/gepa_run.py
-uv run runs/coev_run.py --mode reinforce
-uv run runs/coev_v2_run.py --mode coev
-uv run runs/adversary_run.py --mode train
+uv run python runs/gepa_run.py
+uv run python runs/coev_run.py --mode reinforce
+uv run python runs/coev_v2_run.py --mode coev
+uv run python runs/coev_v2_run.py --mode coev --adversary-policy rloo
+uv run python runs/adversary_run.py --mode train
 ```
 
 ### 6) Minimal runtime wiring example
@@ -203,7 +205,7 @@ if __name__ == "__main__":
 ### Common pitfalls to avoid
 
 - Building runtime sessions inside loops (slow and error-prone).
-- Adding model-specific branching in `runs/` instead of `src/runtime/catalog.py`.
+- Adding model-specific branching in `runs/` instead of `src/runtime/sessions.py` (`RuntimeCatalog`).
 - Reimplementing evaluation math instead of using shared evaluators.
 - Skipping `RunManifest` output (breaks downstream analysis consistency).
 
@@ -219,37 +221,22 @@ if __name__ == "__main__":
 
 ## `src/runtime/` File-by-File
 
-### `interfaces.py`
-Core protocol contracts:
-- `GenerationRequest`
-- `TargetRuntime`
-- `JudgeRuntime`
-- `ReflectionGateway`
-- `LoRABridge`
-- `GenerationSession`
+### `contracts.py`
+Runtime dataclasses and protocol contracts:
+- Config: `LocalHFConfig`, `TargetModelConfig`, `UnslothAdversaryConfig`, `HarmbenchJudgeConfig`, `OpenAIReflectionConfig`, `OpenAITargetConfig`, and related CoEV/GEPA config types
+- Protocols: `GenerationRequest`, `TargetRuntime`, `JudgeRuntime`, `ReflectionGateway`, `LoRABridge`, `GenerationSession`
 
-### `config.py`
-Runtime dataclasses used with `RuntimeCatalog`, including:
-- `LocalHFConfig`
-- `TargetModelConfig`
-- `UnslothAdversaryConfig`
-- `HarmbenchJudgeConfig`
-- `OpenAIReflectionConfig`
-
-### `catalog.py`
-Single runtime composition entrypoint:
-- `build_target_session(...)`
-- `build_adversary_session(...)`
-- `build_judge_session(...)`
-- `build_reflection_gateway(...)`
+### `sessions.py`
+Runtime composition and helpers:
+- `RuntimeCatalog`: `build_target_session`, `build_openai_target_session`, `build_adversary_session`, `build_judge_session`, `build_reflection_gateway`
+- YAML/env factories: `build_vllm_target_session`, `build_local_hf_target_session`, `build_reflection_gateway_for_defaults`, `resolve_reflection_env_overrides`, `resolve_target_backend`, `build_target_session_from_runtime`
+- Timed target batching: `timed_target_generate`, `cap_thread_workers`, `run_target_requests_ordered`
 
 ### Other runtime modules
 
-- `local_hf_runtime.py`: local Transformers target runtime.
-- `unsloth_adversary_runtime.py`: trainable Unsloth + LoRA adversary runtime.
-- `harmbench_judge_runtime.py`: HarmBench yes/no judge runtime.
-- `openai_reflection_gateway.py`: OpenAI-compatible reflection gateway.
-- `env.py`: `resolve_hf_token()` and `scoped_env(...)`.
+- `openai_http.py`: OpenAI-compatible HTTP target (`OpenAIChatTargetRuntime`), reflection gateway (`OpenAIReflectionGateway`), and shared `openai_chat_completion` helper.
+- `local_runtimes.py`: local Transformers target (`LocalHFChatRuntime`), HarmBench judge (`HarmbenchJudgeRuntime`), PEFT adversary (`UnslothAdversaryRuntime`).
+- `defaults.py`: YAML loading, `shared_generation` merge, `resolve_hf_token()`, `scoped_env(...)`.
 - `evaluation.py`: `EvaluationConfig`, `EvaluationResult`, `EvaluatedSample`, `EvaluationBatchResult`, `evaluate_outputs(...)`, `evaluate_examples(...)`.
 - `gepa_prompt_optimization.py`: GEPA optimization configs and run helpers (single-role and dual-role).
 
@@ -273,7 +260,7 @@ Single runtime composition entrypoint:
 ### CoEV v2 path (`runs/coev_v2_run.py`)
 1. Parse run config and resolve device.
 2. Build adversary/target/judge sessions plus reflection gateway.
-3. Run staged REINFORCE updates.
+3. Run staged REINFORCE or RLOO updates (optional rejection sampling, multi-query rewards).
 4. Run dual-role GEPA optimization at stage boundaries.
 5. Re-evaluate and save full artifacts + `RunManifest`.
 
@@ -281,7 +268,7 @@ Single runtime composition entrypoint:
 1. Parse run config and resolve device.
 2. Build adversary/target/judge sessions via `RuntimeCatalog`.
 3. Load HarmBench train/val data.
-4. Fine-tune adversary weights with REINFORCE from model judgment rewards.
+4. Fine-tune adversary weights with policy-gradient (`src/runtime/policy_gradient.py`: REINFORCE, RLOO, or rejection sampling).
 5. Evaluate on held-out prompts and save artifacts + `RunManifest`.
 
 ## Implementation Guidance
@@ -295,7 +282,7 @@ Single runtime composition entrypoint:
 ### Example CoEV v2 invocation
 
 ```bash
-uv run runs/coev_v2_run.py \
+uv run python runs/coev_v2_run.py \
   --mode coev \
   --dataset-name walledai/HarmBench \
   --max-metric-calls 80 \

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Unified runner for GEPA, CoEV v2, CoEV v2 RLOO, and adversary experiments.
 
-Dispatches to ``runs/gepa_run.py``, ``runs/coev_v2_run.py``,
-``runs/coev_v2_RLOO_run.py``, and ``runs/adversary_run.py``. The only CLI flag is
+Dispatches to ``runs/gepa_run.py``, ``runs/coev_v2_run.py`` (REINFORCE or RLOO via
+``--adversary-policy``), and ``runs/adversary_run.py``. The only CLI flag is
 ``--mode``; everything else comes from the active config YAML
 (``configs/default.yaml`` or ``PROMPT_OPT_CONFIG_PATH``), under
 ``scripts.unified_runner`` and ``global`` / ``runs.*``.
@@ -17,13 +17,13 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from src.runtime.defaults import load_default_config
-
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from src.runtime.defaults import load_default_config
 GEPA_SCRIPT = REPO_ROOT / "runs" / "gepa_run.py"
 COEV_V2_SCRIPT = REPO_ROOT / "runs" / "coev_v2_run.py"
-COEV_V2_RLOO_SCRIPT = REPO_ROOT / "runs" / "coev_v2_RLOO_run.py"
 ADVERSARY_SCRIPT = REPO_ROOT / "runs" / "adversary_run.py"
 
 
@@ -110,9 +110,11 @@ def build_coev_v2_command(o: dict[str, Any]) -> list[str]:
 def build_coev_v2_rloo_command(o: dict[str, Any]) -> list[str]:
     cmd: list[str] = [
         sys.executable,
-        str(COEV_V2_RLOO_SCRIPT),
+        str(COEV_V2_SCRIPT),
         "--mode",
         o["coev_v2_rloo_mode"],
+        "--adversary-policy",
+        "rloo",
         "--results-dir",
         o["coev_v2_rloo_results_dir"],
     ]

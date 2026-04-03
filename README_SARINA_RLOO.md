@@ -73,14 +73,13 @@ git checkout sarina-rloo-steerbaseline
 
 ### 2. Create Environments
 
-**Terminal 1: vLLM server**
-```bash
-conda create -n vllm-serve python=3.11 -y
-conda activate vllm-serve
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
-pip install vllm
+**Terminal 1: vLLM server** (from repo root after `uv sync`; use `uv run python`, not bare `python`)
 
-python -m vllm.entrypoints.openai.api_server \
+```bash
+cd ~/prompt-optimization
+uv sync
+
+uv run python -m vllm.entrypoints.openai.api_server \
   --model meta-llama/Llama-3.1-8B-Instruct \
   --port 8000 \
   --gpu-memory-utilization 0.35 \
@@ -102,11 +101,12 @@ pip install unsloth pandas datasets openai pydantic pyyaml transformers
 
 ```bash
 cd ~/prompt-optimization
+uv sync
 export PYTHONPATH=~/prompt-optimization
 export REFLECTION_VLLM_BASE_URL="http://localhost:8000/v1"
 export REFLECTION_VLLM_API_KEY="fake-key"
 
-python runs/coev_run.py --mode gepa --adversary-prompt default
+uv run python runs/coev_run.py --mode gepa --adversary-prompt default
 ```
 
 **Outputs:**
@@ -117,13 +117,13 @@ python runs/coev_run.py --mode gepa --adversary-prompt default
 
 ```bash
 # XSTest (overrefusal measurement)
-python scripts/run_benchmark.py \
+uv run python scripts/run_benchmark.py \
   --benchmark xstest \
   --xstest-limit 100 \
   --output-dir results/xstest_latest
 
 # HarmBench (standard safety benchmark)
-python scripts/run_benchmark.py \
+uv run python scripts/run_benchmark.py \
   --benchmark harmbench \
   --harmbench-limit 100 \
   --output-dir results/harmbench_latest
@@ -161,7 +161,7 @@ GepaConfig(
 ### REINFORCE Config (similar structure for single-stage training)
 
 ```bash
-python runs/coev_run.py --mode reinforce \
+uv run python runs/coev_run.py --mode reinforce \
   --adversary-prompt persona \
   --rloo-n 5 \
   --target-queries 2 \

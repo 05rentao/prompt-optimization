@@ -69,9 +69,9 @@ Before launching long runs, verify your token and access:
 2. Run the checks below on the Prime instance:
 
 ```bash
-uv run python3 -c "from huggingface_hub import whoami; print(whoami())"
+uv run python -c "from huggingface_hub import whoami; print(whoami())"
 
-uv run python3 - <<'PY'
+uv run python - <<'PY'
 from huggingface_hub import model_info, dataset_info
 
 models = [
@@ -205,13 +205,13 @@ Using your own launch shell launch script: (replace with your script path)
 chmod +x ./scripts/launch_vector_steering_prime.sh
 ```
 
-Running a python file"
+Use `uv run python` for all project scripts (never bare `python` / `python3`). Example:
 ```bash
-uv run <path-to-python-file>
+uv run python runs/gepa_run.py --help
 ```
 
 
-Edit `configs/default.yaml` (or `PROMPT_OPT_CONFIG_PATH`) for sub-modes, budgets, and paths — see `scripts.unified_runner` and `runs.*`.
+Edit `configs/default.yaml` (or `PROMPT_OPT_CONFIG_PATH`) for sub-modes, budgets, and paths — see `scripts.unified_runner` and `runs.*`. **Unified prompts and decoding defaults** live under **`shared_generation`** (merged into each `runs.<name>` when config loads); override per-run in `runs.*` or via CLI flags on the run scripts.
 
 ### 7) Typical runtime expectations on one H100 (rough guidance)
 
@@ -266,7 +266,7 @@ rg "error|ERROR|Traceback|CUDA|OOM|started|Uvicorn" logs/unified_reflection_vllm
 ls -lt results/
 
 # for coev_v2 runs
-ls -lt results/coev | head
+ls -lt results/coev_v2 | head
 
 # for gepa runs
 ls -lt results/gepa | head
@@ -278,10 +278,10 @@ ls -lt results/gepa | head
 
 ### 11) Primary artifact locations
 
-- GEPA mode: `results/gepa/`
-- CoEV mode: `results/coev/`
-- CoEV v2 mode: `results/coev/` (or your `COEV_RESULTS_DIR`)
-- Adversary mode: `results/adversary/`
+- GEPA mode: `results/gepa/` (or `gepa_results_dir` from `scripts.unified_runner`)
+- Legacy CoEV (`coev_run.py`): typically under `results/` as configured in `runs.coev.results_dir`
+- CoEV v2 mode: `results/coev_v2/` (or `coev_v2_results_dir` / `coev_v2_rloo_results_dir` from `scripts.unified_runner`)
+- Adversary mode: `results/adversary/` (or `adversary_results_dir`)
 - Smoke runs: `results/smoke/<RUN_TAG>/...`
 
 ### 12) What to inspect first
@@ -307,11 +307,12 @@ rg --files -g "**/*metrics*.json" results
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `Unsupported MODE=...` | Invalid `MODE` env var passed to launcher | Use one of `gepa`, `coev`, `coev_v2`, `adversary` |
+| `Unsupported MODE=...` | Invalid `MODE` env var passed to launcher | Use one of `gepa`, `coev_v2`, `coev_v2_rloo`, `adversary` |
 | Run hangs at reflection startup | Port conflict or vLLM failed to initialize | Check `logs/unified_reflection_vllm.log`, then kill stale processes and rerun |
+| Python fails at **`verify` / first completion** (`Cannot complete with reflection model ...`) | vLLM not ready, wrong `--served-model-name`, or `runtime.models.reflection_model_name` mismatch | Match YAML model id to vLLM; wait for launcher `/v1/models` or logs; see `src/runtime/openai_http.py` (`verify` retries chat completions) |
 | `HF` / dataset access errors | Token missing or model terms not accepted | Export `HF_TOKEN`, run access checks in section 3.5 |
 | CUDA OOM during reflection mode | Reflection model footprint too high for current settings | Reduce `REFLECTION_GPU_UTIL` (example `0.30`) or reduce model/context length |
-| CoEV v2/GEPA progress is very slow | Large `MAX_METRIC_CALLS`, long generations, or heavy reflection model | Lower `MAX_METRIC_CALLS`, `MAX_TOKENS`, and/or use smoke launch first |
+| CoEV v2/GEPA progress is very slow | Large `max_metric_calls`, long generations, or heavy reflection model | Lower `runs.*` budgets in YAML (`max_metric_calls`, `gepa_max_tokens`, `max_new_tokens`, etc.), or `shared_generation.sampling`, and/or use smoke launch first |
 | Permission denied on scripts | Missing execute bit | `chmod +x scripts/launch_unified_prime.sh scripts/launch_smoke_prime.sh` |
 | No artifacts where expected | Custom results dirs overridden in env vars | Echo env vars (`GEPA_RESULTS_DIR`, `COEV_RESULTS_DIR`, `ADVERSARY_RESULTS_DIR`) before launch |
 

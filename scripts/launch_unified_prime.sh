@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "${ROOT_DIR}"
+
 export PYTHONPATH="${PYTHONPATH:-}:."
 
 # Unified launcher for a single H100-80GB Prime instance.
@@ -11,9 +14,9 @@ export PYTHONPATH="${PYTHONPATH:-}:."
 # Modes (scripts/run_unified_experiment.py --mode → runs/*.py):
 #   - gepa:           GEPA prompt optimization (runs/gepa_run.py)
 #   - coev_v2:        CoEV v2 REINFORCE + dual-role GEPA (runs/coev_v2_run.py)
-#   - coev_v2_rloo:   CoEV v2 RLOO + dual-role GEPA (runs/coev_v2_RLOO_run.py)
+#   - coev_v2_rloo:   CoEV v2 RLOO + dual-role GEPA (same script, --adversary-policy rloo)
 #   - adversary:      adversary-only training (runs/adversary_run.py)
-#   (runs/coev_run.py is not wired here.)
+#   (runs/coev_run.py legacy is not wired here.)
 
 MODE="${MODE:-gepa}"                         # gepa | coev_v2 | coev_v2_rloo | adversary
 

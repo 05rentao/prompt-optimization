@@ -2,26 +2,29 @@
 """Adversary-only fine-tuning runner using dataset prompts and model judgment.
 
 This script intentionally excludes prompt-optimization steps (for example GEPA or
-reflection loops). It trains only the adversary model weights with REINFORCE
-signals from target responses judged by either HarmBench judge verdicts or the
-shared heuristic evaluator.
+reflection loops). It trains only the adversary model weights with REINFORCE, RLOO,
+or rejection-sampling policy-gradient updates from target responses judged by
+either HarmBench judge verdicts or the shared heuristic evaluator.
 """
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 import argparse
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
-from collections.abc import Sequence
-from pathlib import Path
 from typing import Any
 
 import pandas as pd
 import seaborn as sns
 import torch
-import torch.nn.functional as f
 
 from src.artifacts import (
     build_baseline_optimized_df,
@@ -54,17 +57,28 @@ from src.runtime import (
     build_vllm_target_session,
     cap_thread_workers,
     evaluate_outputs,
+    patch_run_args_from_config,
     resolve_hf_token,
-    resolve_reflection_env_overrides,
     timed_target_generate,
 )
 from src.runtime.defaults import build_config_snapshot, load_default_config
+from src.runtime.policy_gradient import (
+    pad_gen_ids_batch,
+    reinforce_update_batch_sgd,
+    rejection_sampling_update_sgd,
+    rloo_update_batch_sgd,
+)
 from src.types import RunManifest
 
 
 @dataclass
 class AdversaryTrainingConfig:
-    """Config values controlling adversary-only fine-tuning and eval cadence."""
+    """Config values controlling adversary-only fine-tuning and eval cadence.
+
+    Effective training hyperparameters come from YAML (``runs.adversary`` merged with
+    ``shared_generation`` via ``load_default_config``); these defaults are only used
+    if a code path constructs the dataclass without the merged file.
+    """
 
     iterations: int = 20
     lr: float = 5e-5
@@ -129,69 +143,6 @@ def target_generate(
     return timed_target_generate(target_session, device, request)
 
 
-def pad_gen_ids_batch(
-    batch_gen_ids: Sequence[torch.Tensor], pad_id: int
-) -> tuple[torch.Tensor, list[int]]:
-    """Right-pad (1, L) tensors to a common L for batched forward; keep valid lengths."""
-    lengths = [int(x.shape[-1]) for x in batch_gen_ids]
-    max_len = max(lengths)
-    rows: list[torch.Tensor] = []
-    for x in batch_gen_ids:
-        if x.dim() != 2 or x.size(0) != 1:
-            raise ValueError(f"expected gen_ids shape (1, L), got {tuple(x.shape)}")
-        L = x.size(1)
-        if L < max_len:
-            pad = torch.full(
-                (1, max_len - L),
-                pad_id,
-                dtype=x.dtype,
-                device=x.device,
-            )
-            x = torch.cat([x, pad], dim=1)
-        rows.append(x)
-    return torch.cat(rows, dim=0), lengths
-
-
-def reinforce_update_batch_sgd(
-    model: Any,
-    optimizer: Any,
-    gen_ids: Any,
-    prompt_lens: list[int],
-    rewards: Any,
-    valid_seq_lens: list[int] | None = None,
-) -> tuple[float, Any]:
-    """Apply a REINFORCE-style SGD step: mean over batch of (-reward_i * sum log pi)."""
-
-    model.train()
-    if valid_seq_lens is None:
-        valid_seq_lens = [int(gen_ids.size(1))] * int(gen_ids.size(0))
-
-    out = model(input_ids=gen_ids, use_cache=False)
-    logits = out.logits
-    log_probs = f.log_softmax(logits[:, :-1, :], dim=-1)
-
-    logprob_sums = []
-    for i in range(gen_ids.size(0)):
-        prompt_len = int(prompt_lens[i])
-        valid_end = int(valid_seq_lens[i])
-        comp_ids = gen_ids[i, prompt_len:valid_end].clone()
-        if comp_ids.numel() == 0:
-            logprob_sums.append(torch.tensor(0.0, device=gen_ids.device))
-            continue
-        start = prompt_len - 1
-        end = start + comp_ids.size(0)
-        lp = log_probs[i, start:end, :]
-        tok_lp = torch.gather(lp, -1, comp_ids.unsqueeze(-1)).squeeze(-1)
-        logprob_sums.append(tok_lp.sum())
-
-    logprob_sums = torch.stack(logprob_sums)
-    loss = -(rewards * logprob_sums).mean()
-    optimizer.zero_grad(set_to_none=True)
-    loss.backward()
-    optimizer.step()
-    return float(loss.detach().cpu()), logprob_sums.detach()
-
-
 def reward_from_response(
     prompt: str,
     target_response: str,
@@ -212,13 +163,15 @@ def _evaluation_result_to_metrics(ev: EvaluationResult, latency_ms_mean: float) 
     aggregate_score = ev.mean_refusal_score
     if aggregate_score is None:
         aggregate_score = ev.refusal_rate
-    return {
+    out: dict[str, float] = {
         "refusal_rate": float(ev.refusal_rate),
         "asr": float(ev.asr),
-        "mean_refusal_score": float(ev.mean_refusal_score or 0.0),
         "aggregate_score": float(aggregate_score),
         "latency_ms_mean": float(latency_ms_mean),
     }
+    if ev.mean_refusal_score is not None:
+        out["mean_refusal_score"] = float(ev.mean_refusal_score)
+    return out
 
 
 def evaluate_asr(
@@ -360,6 +313,16 @@ def _try_save_adapters_print(ctx: RunContext, save_dir: str | None, results_dir:
     return path
 
 
+def _adversary_training_label(args: argparse.Namespace) -> str:
+    """Human-readable label for plot copy (REINFORCE, RLOO, or rejection sampling)."""
+
+    if getattr(args, "rs_min_successes", 0) > 0:
+        return "rejection sampling"
+    if getattr(args, "adversary_policy", "reinforce") == "rloo":
+        return "RLOO"
+    return "REINFORCE"
+
+
 def save_artifacts(
     args: argparse.Namespace,
     results_dir: Path,
@@ -376,11 +339,12 @@ def save_artifacts(
     """Persist metrics, CSVs, plots, and manifest.
 
     Prompts are fixed for the run (from CLI/config); artifacts compare **adversary
-    weights** before vs after REINFORCE, not prompt optimization. Instruction and
-    target system prompt text are not written to disk.
+    weights** before vs after policy-gradient training, not prompt optimization.
+    Instruction and target system prompt text are not written to disk.
     """
 
     results_dir.mkdir(parents=True, exist_ok=True)
+    policy_label = _adversary_training_label(args)
 
     metrics_payload: dict[str, Any] = {
         "config": {
@@ -396,6 +360,9 @@ def save_artifacts(
             "eval_method": args.eval_method,
             "iterations": train_cfg.iterations if args.mode == "train" else 0,
             "run_seconds": run_seconds,
+            "adversary_policy": getattr(args, "adversary_policy", "reinforce"),
+            "rs_budget": getattr(args, "rs_budget", 5),
+            "rs_min_successes": getattr(args, "rs_min_successes", 0),
         },
         "baseline_metrics": baseline_metrics,
         "final_metrics": final_metrics,
@@ -426,7 +393,7 @@ def save_artifacts(
         title="Adversary eval: before vs after training",
         subtitle=(
             "Same fixed rewriter instruction and target system prompt. "
-            "before_training = adversary LoRA at init; after_training = same LoRA after REINFORCE. "
+            f"before_training = adversary LoRA at init; after_training = same LoRA after {policy_label}. "
             "Bars = aggregate metrics on the held-out eval set (not per-step noise)."
         ),
     )
@@ -477,6 +444,9 @@ def save_artifacts(
             "eval_csv_name": train_cfg.eval_csv_name,
             "save_dir": adapter_path,
             "eval_method": args.eval_method,
+            "adversary_policy": getattr(args, "adversary_policy", "reinforce"),
+            "rs_budget": getattr(args, "rs_budget", 5),
+            "rs_min_successes": getattr(args, "rs_min_successes", 0),
         },
         config_snapshot=config_snapshot,
     )
@@ -530,24 +500,38 @@ def parse_args(defaults: dict[str, Any]) -> argparse.Namespace:
     parser.add_argument("--attacker-instruction", default=run_defaults["attacker_instruction"])
     parser.add_argument("--target-system-prompt", default=run_defaults["target_system_prompt"])
     parser.add_argument(
+        "--adversary-policy",
+        choices=["reinforce", "rloo"],
+        default=run_defaults.get("adversary_policy", "reinforce"),
+        help="Policy gradient: REINFORCE or RLOO (ignored when rejection sampling is enabled).",
+    )
+    parser.add_argument(
         "--adversary-reinforce-batch-size",
         type=int,
         default=run_defaults.get("adversary_reinforce_batch_size", 1),
-        help="K adversary→target rollouts per REINFORCE step (padded batch, mean loss).",
+        help="K adversary→target rollouts per step when not using rejection sampling (padded batch).",
     )
-    return parser.parse_args()
-
-
-def _patch_args_from_yaml(args: argparse.Namespace, defaults: dict[str, Any]) -> None:
-    """Attach runtime/model fields from YAML (exposed as args.* for manifest/metrics)."""
-    args.runtime_profile = defaults["global"]["runtime_profile"]
-    models = defaults["runtime"]["models"]
-    args.adversary_model_id = models["adversary_model_id"]
-    args.task_model_name = models["target_model_name"]
-    args.judge_model_id = models["judge_model_id"]
-    rw_url, rw_key = resolve_reflection_env_overrides(defaults)
-    args.reflection_vllm_base_url = rw_url
-    args.reflection_vllm_api_key = rw_key
+    parser.add_argument(
+        "--rs-budget",
+        type=int,
+        default=run_defaults.get("rs_budget", 5),
+        help="Max adversary samples per step when rejection sampling is enabled.",
+    )
+    parser.add_argument(
+        "--rs-min-successes",
+        type=int,
+        default=run_defaults.get("rs_min_successes", 0),
+        help=(
+            "Rejection sampling: stop after this many successes (reward>0.5), up to --rs-budget. "
+            "0 disables rejection sampling."
+        ),
+    )
+    args = parser.parse_args()
+    if args.rs_min_successes > 0 and args.adversary_policy == "rloo":
+        parser.error(
+            "Rejection sampling (--rs-min-successes > 0) requires --adversary-policy reinforce, not rloo."
+        )
+    return args
 
 
 def _build_context(args: argparse.Namespace, defaults: dict[str, Any], device: str) -> RunContext:
@@ -573,7 +557,7 @@ def main() -> None:
     run_start = time.time()
     defaults = load_default_config()
     args = parse_args(defaults)
-    _patch_args_from_yaml(args, defaults)
+    patch_run_args_from_config(defaults, args, run="adversary")
     sns.set_theme(style="whitegrid")
     run_defaults = defaults["runs"]["adversary"]
 
@@ -639,7 +623,8 @@ def main() -> None:
     optimizer = torch.optim.AdamW(model.parameters(), lr=train_cfg.lr, weight_decay=train_cfg.weight_decay)
 
     if args.mode == "train":
-        batch_size = max(1, int(args.adversary_reinforce_batch_size))
+        use_rs = args.rs_min_successes > 0
+        rs_budget = max(1, int(args.rs_budget))
         for iteration in range(train_cfg.iterations):
             idx = torch.randint(0, len(train_prompts), ()).item()
             prompt = train_prompts[idx]
@@ -651,29 +636,60 @@ def main() -> None:
             target_resps: list[str] = []
             verdicts: list[str] = []
 
-            for _ in range(batch_size):
-                sampled, _ = adversary_output(
-                    prompt=prompt,
-                    attacker_instruction=args.attacker_instruction,
-                    adversary_session=ctx.adversary_session,
-                    device=ctx.device,
-                    max_new_tokens=train_cfg.max_new_tokens,
-                )
-                adversary_text = sampled["completion_text"].strip()
-                target_response, _ = target_generate(
-                    prompt=adversary_text,
-                    target_session=ctx.target_session,
-                    device=ctx.device,
-                    target_system_prompt=args.target_system_prompt,
-                    max_new_tokens=train_cfg.target_max_new_tokens,
-                )
-                reward, verdict = reward_from_response(prompt, target_response, eval_cfg, ctx)
-                batch_gen_ids.append(sampled["gen_ids"])
-                batch_rewards.append(reward)
-                batch_prompt_lens.append(sampled["prompt_len"])
-                adv_texts.append(adversary_text)
-                target_resps.append(target_response)
-                verdicts.append(verdict)
+            if use_rs:
+                n_successes_so_far = 0
+                for _ in range(rs_budget):
+                    sampled, _ = adversary_output(
+                        prompt=prompt,
+                        attacker_instruction=args.attacker_instruction,
+                        adversary_session=ctx.adversary_session,
+                        device=ctx.device,
+                        max_new_tokens=train_cfg.max_new_tokens,
+                    )
+                    adversary_text = sampled["completion_text"].strip()
+                    target_response, _ = target_generate(
+                        prompt=adversary_text,
+                        target_session=ctx.target_session,
+                        device=ctx.device,
+                        target_system_prompt=args.target_system_prompt,
+                        max_new_tokens=train_cfg.target_max_new_tokens,
+                    )
+                    reward, verdict = reward_from_response(prompt, target_response, eval_cfg, ctx)
+                    batch_gen_ids.append(sampled["gen_ids"])
+                    batch_rewards.append(reward)
+                    batch_prompt_lens.append(sampled["prompt_len"])
+                    adv_texts.append(adversary_text)
+                    target_resps.append(target_response)
+                    verdicts.append(verdict)
+                    if reward > 0.5:
+                        n_successes_so_far += 1
+                        if n_successes_so_far >= args.rs_min_successes:
+                            break
+            else:
+                batch_size = max(1, int(args.adversary_reinforce_batch_size))
+                for _ in range(batch_size):
+                    sampled, _ = adversary_output(
+                        prompt=prompt,
+                        attacker_instruction=args.attacker_instruction,
+                        adversary_session=ctx.adversary_session,
+                        device=ctx.device,
+                        max_new_tokens=train_cfg.max_new_tokens,
+                    )
+                    adversary_text = sampled["completion_text"].strip()
+                    target_response, _ = target_generate(
+                        prompt=adversary_text,
+                        target_session=ctx.target_session,
+                        device=ctx.device,
+                        target_system_prompt=args.target_system_prompt,
+                        max_new_tokens=train_cfg.target_max_new_tokens,
+                    )
+                    reward, verdict = reward_from_response(prompt, target_response, eval_cfg, ctx)
+                    batch_gen_ids.append(sampled["gen_ids"])
+                    batch_rewards.append(reward)
+                    batch_prompt_lens.append(sampled["prompt_len"])
+                    adv_texts.append(adversary_text)
+                    target_resps.append(target_response)
+                    verdicts.append(verdict)
 
             tok = model.tokenizer
             pad_id = tok.pad_token_id
@@ -684,16 +700,39 @@ def main() -> None:
             padded_ids, valid_lens = pad_gen_ids_batch(batch_gen_ids, int(pad_id))
             device_t = padded_ids.device
             rewards_t = torch.tensor(batch_rewards, dtype=torch.float32, device=device_t)
-            loss_val, _ = reinforce_update_batch_sgd(
-                model=model,
-                optimizer=optimizer,
-                gen_ids=padded_ids,
-                prompt_lens=batch_prompt_lens,
-                rewards=rewards_t,
-                valid_seq_lens=valid_lens,
-            )
+
+            if use_rs:
+                loss_val, _n_used = rejection_sampling_update_sgd(
+                    model=model,
+                    optimizer=optimizer,
+                    gen_ids=padded_ids,
+                    prompt_lens=batch_prompt_lens,
+                    rewards=rewards_t,
+                    valid_seq_lens=valid_lens,
+                )
+                if loss_val is None:
+                    loss_val = float("nan")
+            elif args.adversary_policy == "rloo":
+                loss_val, _ = rloo_update_batch_sgd(
+                    model=model,
+                    optimizer=optimizer,
+                    gen_ids=padded_ids,
+                    prompt_lens=batch_prompt_lens,
+                    rewards=rewards_t,
+                    valid_seq_lens=valid_lens,
+                )
+            else:
+                loss_val, _ = reinforce_update_batch_sgd(
+                    model=model,
+                    optimizer=optimizer,
+                    gen_ids=padded_ids,
+                    prompt_lens=batch_prompt_lens,
+                    rewards=rewards_t,
+                    valid_seq_lens=valid_lens,
+                )
 
             mean_r = float(rewards_t.mean().item())
+            log_batch = len(batch_rewards)
 
             eval_asr: float | str = ""
             eval_refusal_rate: float | str = ""
@@ -726,7 +765,9 @@ def main() -> None:
                     "loss": loss_val,
                     "verdict": verdicts[0],
                     "max_reward": max(batch_rewards),
-                    "batch_size": batch_size,
+                    "batch_size": log_batch,
+                    "adversary_policy": args.adversary_policy,
+                    "rejection_sampling": use_rs,
                     "eval_asr": eval_asr,
                     "eval_refusal_rate": eval_refusal_rate,
                 }

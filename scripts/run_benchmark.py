@@ -3,11 +3,17 @@
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 import argparse
 import json
 import time
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 import torch
@@ -31,11 +37,26 @@ from src.runtime import (
 from src.runtime.defaults import load_default_config
 
 
+def _benchmark_target_sampling(defaults: dict[str, Any]) -> tuple[str, int, float]:
+    """System prompt and decoding from merged config (shared_generation + runs.adversary)."""
+    adv = defaults.get("runs", {}).get("adversary", {})
+    sg = defaults.get("shared_generation") or {}
+    samp = sg.get("sampling") or {}
+    system = adv.get("target_system_prompt") or sg.get("target_system_prompt", "You are a helpful assistant.")
+    max_tok = int(adv.get("max_new_tokens") or samp.get("target_max_new_tokens") or 256)
+    temp = float(samp.get("target_temperature", 0.0))
+    return system, max_tok, temp
+
+
 def run_xstest_benchmark(
     model_session: GenerationSession,
     examples: list[dict[str, Any]],
     device: str,
     output_dir: Path,
+    *,
+    system_prompt: str,
+    max_new_tokens: int,
+    temperature: float,
 ) -> dict[str, Any]:
     """Run XSTest benchmark and save results."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -43,10 +64,10 @@ def run_xstest_benchmark(
     results = []
     for i, example in enumerate(examples):
         request = GenerationRequest(
-            system_prompt="You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe.",
+            system_prompt=system_prompt,
             user_prompt=example["prompt"],
-            max_new_tokens=150,
-            temperature=0.0,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
         )
         response = model_session.generate(request, device=device)
 
@@ -92,6 +113,10 @@ def run_harmbench_benchmark(
     examples: list[dict[str, Any]],
     device: str,
     output_dir: Path,
+    *,
+    system_prompt: str,
+    max_new_tokens: int,
+    temperature: float,
 ) -> dict[str, Any]:
     """Run HarmBench benchmark and save results."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -99,10 +124,10 @@ def run_harmbench_benchmark(
     results = []
     for i, example in enumerate(examples):
         request = GenerationRequest(
-            system_prompt="You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe.",
+            system_prompt=system_prompt,
             user_prompt=example["prompt"],
-            max_new_tokens=150,
-            temperature=0.0,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
         )
         response = model_session.generate(request, device=device)
 
@@ -214,6 +239,7 @@ def main() -> None:
     defaults = load_default_config()
     device = args.device
     hf_token = resolve_hf_token()
+    sys_prompt, bench_max_tokens, bench_temp = _benchmark_target_sampling(defaults)
 
     # Set up output directory
     if args.output_dir:
@@ -236,7 +262,15 @@ def main() -> None:
         print("Running XSTest benchmark...")
         xstest_examples = load_xstest_subset(limit=args.xstest_limit, hf_token=hf_token)
         xstest_output = output_root / "xstest"
-        run_xstest_benchmark(model_session, xstest_examples, device, xstest_output)
+        run_xstest_benchmark(
+            model_session,
+            xstest_examples,
+            device,
+            xstest_output,
+            system_prompt=sys_prompt,
+            max_new_tokens=bench_max_tokens,
+            temperature=bench_temp,
+        )
 
     if args.benchmark in ["harmbench", "both"]:
         print("Running HarmBench benchmark...")
@@ -250,7 +284,16 @@ def main() -> None:
             hf_token=hf_token,
         )
         harmbench_output = output_root / "harmbench"
-        run_harmbench_benchmark(model_session, judge_session, harmbench_data, device, harmbench_output)
+        run_harmbench_benchmark(
+            model_session,
+            judge_session,
+            harmbench_data,
+            device,
+            harmbench_output,
+            system_prompt=sys_prompt,
+            max_new_tokens=bench_max_tokens,
+            temperature=bench_temp,
+        )
 
     print(f"\nAll benchmarks completed. Results saved to: {output_root}")
 

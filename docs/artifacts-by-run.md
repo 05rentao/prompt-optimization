@@ -2,16 +2,18 @@
 
 Quick reference for what each runner writes under `results_dir`. Use this to compare runs, debug GEPA, or wire dashboards.
 
-**`run_manifest.json`** (all runners below) includes a **`config_snapshot`** object: which YAML was loaded (`PROMPT_OPT_CONFIG_PATH` or `configs/default.yaml`), effective reflection base URL and related env flags (no API key values), and **`cli_args`** — the resolved argparse values (defaults from YAML are already applied where the script wires them). The full YAML is **not** embedded.
+**`run_manifest.json`** (all runners below) includes a **`config_snapshot`** object: which YAML was loaded (`PROMPT_OPT_CONFIG_PATH` or `configs/default.yaml`), effective reflection base URL and related env flags (no API key values), and **`cli_args`** — the resolved argparse values (defaults from merged YAML are already applied; active scripts use **`patch_run_args_from_config`** so reflection URL/key on `args` match env + YAML). The full YAML is **not** embedded.
+
+**Effective prompts and decoding:** At load time, `load_default_config()` merges the top-level **`shared_generation`** block (seed attacker instruction, target system prompt, sampling limits, eval thresholds) into each **`runs.<name>`** section. Per-run keys in the file still override those defaults. So manifests reflect **CLI-resolved** values, which ultimately trace back to that merged tree unless you passed explicit CLI overrides.
 
 ## Summary
 
 | Runner | Script | Trains weights | GEPA | Typical use |
 |--------|--------|----------------|------|-------------|
-| Adversary-only | `runs/adversary_run.py` | Yes | No | REINFORCE on adversary; fixed prompts |
+| Adversary-only | `runs/adversary_run.py` | Yes | No | REINFORCE, RLOO, or rejection sampling; fixed prompts |
 | GEPA-only | `runs/gepa_run.py` | No | Yes (1 role: system prompt) | Isolate defense prompt optimization |
-| CoEV v2 | `runs/coev_v2_run.py` | Yes (REINFORCE) | Yes (2 roles / stage) | Full coevolution |
-| CoEV v2 RLOO | `runs/coev_v2_RLOO_run.py` | Yes (RLOO) | Same as CoEV v2 | Same artifacts as CoEV v2; training CSV differs |
+| CoEV v2 | `runs/coev_v2_run.py` | Yes (REINFORCE/RLOO/RS) | Yes (2 roles / stage) | Full coevolution |
+| CoEV v2 RLOO | `runs/coev_v2_run.py` (`--adversary-policy rloo`) | Yes (RLOO) | Same as CoEV v2 | Same artifacts as CoEV v2; manifest `mode` is `coev_v2_rloo` |
 
 CoEV v2 and RLOO share the **same filenames**; distinguish runs via `run_manifest.json` (`mode`: `coev_v2` vs `coev_v2_rloo`) and plot titles.
 
@@ -19,7 +21,7 @@ CoEV v2 and RLOO share the **same filenames**; distinguish runs via `run_manifes
 
 ## Adversary-only (`adversary_run.py`)
 
-**What is being compared?** This run **does not** optimize prompts. The rewriter instruction and target system prompt stay fixed (from CLI / `configs/default.yaml`). The **adversary model’s LoRA weights** are trained with REINFORCE. Artifacts compare **eval on the held-out set** at **initialization** vs **after** training.
+**What is being compared?** This run **does not** optimize prompts. The rewriter instruction and target system prompt stay fixed (from CLI / `configs/default.yaml`). The **adversary model’s LoRA weights** are trained with REINFORCE, RLOO, or rejection sampling (`runs.adversary` / CLI). Artifacts compare **eval on the held-out set** at **initialization** vs **after** training.
 
 | Artifact | Purpose |
 |----------|---------|
@@ -55,7 +57,7 @@ All paths are under **`--results-dir`** (default from `runs.gepa.results_dir` in
 
 ---
 
-## CoEV v2 & CoEV v2 RLOO (`coev_v2_run.py`, `coev_v2_RLOO_run.py`)
+## CoEV v2 & CoEV v2 RLOO (`coev_v2_run.py`, `--adversary-policy reinforce` vs `rloo`)
 
 | Artifact | Purpose |
 |----------|---------|

@@ -66,4 +66,4 @@ uv run python -m vllm.entrypoints.openai.api_server \
 wait_for_port $JUDGE_PORT
 
 echo "🔥 ALL SYSTEMS GO. Starting DSPy Pipeline..."
-uv run scripts/gepa_run.py
+uv run python runs/gepa_run.py

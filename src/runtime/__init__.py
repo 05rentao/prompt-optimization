@@ -1,26 +1,33 @@
 """Public runtime API surface for experiment orchestration."""
 
-from .catalog import RuntimeCatalog
-from .config import (
+from .contracts import (
     CoevConfig,
     GepaOptimizationConfig,
+    GenerationRequest,
+    GenerationSession,
     HarmbenchJudgeConfig,
+    JudgeRuntime,
     LocalHFConfig,
+    LoRABridge,
     ModelConfig,
     OpenAIReflectionConfig,
     OpenAITargetConfig,
+    ReflectionGateway,
     TargetModelConfig,
+    TargetRuntime,
     UnslothAdversaryConfig,
 )
-from .defaults import build_config_snapshot, load_default_config, resolve_config_path
-from .target_factory import (
-    build_local_hf_target_session,
-    build_reflection_gateway_for_defaults,
-    build_vllm_target_session,
-    resolve_reflection_env_overrides,
+from .defaults import (
+    apply_shared_generation_defaults,
+    build_config_snapshot,
+    deep_merge_runs,
+    load_default_config,
+    resolve_config_path,
+    resolve_hf_token,
+    scoped_env,
 )
-from .env import resolve_hf_token, scoped_env
 from .evaluation import EvaluationBatchResult, EvaluationConfig, EvaluatedSample, EvaluationResult, evaluate_examples, evaluate_outputs
+from .openai_http import OpenAIReflectionGateway
 from .gepa_prompt_optimization import (
     DualRoleGepaContext,
     DualRoleGepaOptimizationResult,
@@ -29,8 +36,18 @@ from .gepa_prompt_optimization import (
     run_dual_role_gepa_prompt_optimization,
     run_gepa_prompt_optimization,
 )
-from .interfaces import GenerationRequest, GenerationSession, JudgeRuntime, LoRABridge, ReflectionGateway, TargetRuntime
-from .timed_target import cap_thread_workers, run_target_requests_ordered, timed_target_generate
+from .sessions import (
+    RuntimeCatalog,
+    build_local_hf_target_session,
+    build_reflection_gateway_for_defaults,
+    build_vllm_stack,
+    build_vllm_target_session,
+    cap_thread_workers,
+    patch_run_args_from_config,
+    resolve_reflection_env_overrides,
+    run_target_requests_ordered,
+    timed_target_generate,
+)
 
 __all__ = [
     "GenerationRequest",
@@ -45,6 +62,7 @@ __all__ = [
     "LoRABridge",
     "OpenAIReflectionConfig",
     "OpenAITargetConfig",
+    "OpenAIReflectionGateway",
     "ReflectionGateway",
     "RuntimeCatalog",
     "TargetRuntime",
@@ -62,11 +80,15 @@ __all__ = [
     "run_gepa_prompt_optimization",
     "run_dual_role_gepa_prompt_optimization",
     "load_default_config",
+    "apply_shared_generation_defaults",
+    "deep_merge_runs",
     "build_config_snapshot",
     "resolve_config_path",
     "build_vllm_target_session",
+    "build_vllm_stack",
     "build_local_hf_target_session",
     "build_reflection_gateway_for_defaults",
+    "patch_run_args_from_config",
     "resolve_reflection_env_overrides",
     "resolve_hf_token",
     "scoped_env",
