@@ -5,6 +5,7 @@ This project provides a notebook-first implementation for adversary-model optimi
 ## Project Structure
 
 - `notebooks/main.ipynb`: Primary implementation notebook (all core logic).
+- `notebooks/experiment_matrix.ipynb`: Control-group and parameter-sweep notebook for comprehensive comparisons.
 - `literature_review.md`: Literature context and methodology reference.
 - `requirements.txt`: Reproducible dependency list.
 - `.env.example`: Environment variable template.
@@ -46,6 +47,11 @@ copy .env.example .env
 2. Select a Python kernel with installed dependencies.
 3. Run cells from top to bottom.
 4. Keep markdown notes and code comments in English.
+
+### Recommended order
+
+1. Run `notebooks/main.ipynb` to validate baseline pipeline.
+2. Run `notebooks/experiment_matrix.ipynb` to execute controls, sweeps, and reproducibility checks.
 
 ## Backend Modes
 
