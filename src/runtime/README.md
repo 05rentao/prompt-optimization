@@ -95,6 +95,7 @@ Shared REINFORCE / RLOO / rejection-sampling tensor math used by **`runs/coev_v2
 | `runs/gepa_run.py` | `patch_run_args_from_config(..., run="gepa")`, `build_vllm_stack`, judge session when `eval_method=judge` |
 | `runs/coev_v2_run.py` | `patch_run_args_from_config(..., run="coev_v2")`, `build_vllm_stack`, dual-role GEPA |
 | `runs/adversary_run.py` | `patch_run_args_from_config(..., run="adversary")`, `build_vllm_target_session` + adversary/judge sessions |
+| `runs/adversary_v2.py` | Same as `adversary_run` for config + sessions; decomposition via `sample_policy` → parse → `run_target_requests_ordered` → concat → reward; optional REINFORCE/RLOO/RS fine-tuning; `--mode eval` for single CSV eval |
 | `runs/coev_run.py` | Legacy; `build_vllm_target_session` directly; prefer `coev_v2_run` for current CoEV + GEPA + shared vLLM |
 | `runs/vector_steering_baseline.py` | `build_local_hf_target_session` only (needs weights for steering) |
 

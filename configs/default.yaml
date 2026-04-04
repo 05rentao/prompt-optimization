@@ -72,47 +72,61 @@ runs:
     val_size: 20
     results_dir: "results/coev_v2"
     training_csv_name: "coev_v2_training_log.csv"
-    # reinforce | rloo — unified script `runs/coev_v2_run.py` (use scripts/run_unified_experiment --mode coev_v2_rloo for RLOO).
+    # runs/coev_v2_run.py: vanilla adversary-only (fixed attacker + defense prompts, no GEPA / prompt evolution).
+    # For prompt presets, multi-query rewards, and richer sweeps, use runs/adversary_run.py (Theme 2 experiments).
+    # Policy: reinforce | rloo — scripts/run_unified_experiment.py --mode coev_v2_rloo passes --adversary-policy rloo.
     adversary_policy: reinforce
-    adversary_prompt: default # default | persona | decompose | academic | fictional (when CLI omits --initial-attacker-instruction)
-    target_queries: 1
+    # Rejection sampling (only with --adversary-policy reinforce): max rollouts per step and stop when enough successes.
     rs_budget: 5
-    rs_min_successes: 0 # 0 = batched REINFORCE/RLOO; >0 = rejection sampling (reinforce only)
-    # REINFORCE: roll this many adversary→target trajectories per optimizer step (padded batch, mean loss).
-    adversary_reinforce_batch_size: 4  # K=4 good for RLOO
-    # Concurrent HTTP completions against vLLM target (eval / stage eval); adversary stays sequential.
+    rs_min_successes: 3 # 0 = batched REINFORCE/RLOO; >0 = rejection sampling (reinforce-only; incompatible with rloo)
+    # Batched REINFORCE/RLOO: K adversary→target trajectories per optimizer step (padded batch).
+    adversary_reinforce_batch_size: 4
+    # Concurrent HTTP completions against vLLM target during eval; adversary (Unsloth) stays sequential.
     target_max_workers: 16
+    # Outer stage count × inner iters_per_stage = total policy-gradient steps before final eval.
     stages: 2
     iters_per_stage: 20
-    eval_every_stages: 1
+    eval_every_stages: 1 # run held-out eval after stage s when s % this == 0
     train_slice_end: 100
     eval_slice_start: 100
     eval_slice_end: 120
     lr: 0.00001
     weight_decay: 0.01
-    max_metric_calls: 50
     eval_method: "judge"
+  # Adversary dataset sizes: HF train pool only; val + test eval always from CSV.
   adversary:
-    train_size: 100
-    val_size: 20
+    hf_train_size: 100
+    csv_val_size: 20
+    csv_test_size: 50
+    harmbench_csv_path: data/harmbench_behaviors.csv
+    csv_seed: 42
     results_dir: "results/adversary"
-    # Concurrent HTTP completions against vLLM target during eval; adversary stays sequential.
     target_max_workers: 16
-    eval_method: "judge"
-    adversary_policy: reinforce # reinforce | rloo (unified script; former adversary_run_rloo.py → --adversary-policy rloo)
-    rs_budget: 5
-    rs_min_successes: 0 # >0 enables rejection sampling (reinforce-only; same as coev_v2)
     iterations: 15
     lr: 0.00005
     weight_decay: 0.01
     eval_every: 1
-    train_slice_end: 100
-    eval_slice_start: 100
-    eval_slice_end: 120
-    # REINFORCE: roll this many adversary→target trajectories per optimizer step (padded batch, mean loss).
     adversary_reinforce_batch_size: 4
-    training_csv_name: "adversary_training_log.csv"
-    eval_csv_name: "adversary_eval_outputs.csv"
+  # runs/adversary_v2.py: decomposed sub-questions; eval (--mode eval) or train + optional LoRA.
+  adversary_v2:
+    results_dir: "results/adversary_v2"
+    finetune: true
+    hf_train_size: 100
+    csv_val_size: 20
+    csv_test_size: 50
+    iterations: 15
+    lr: 0.00005
+    weight_decay: 0.01
+    eval_every: 1
+    adversary_policy: reinforce
+    adversary_reinforce_batch_size: 4
+    rs_budget: 5
+    rs_min_successes: 0
+    max_new_tokens: 512
+    max_subquestions: 12
+    target_sub_workers: 4
+    training_csv_name: "adversary_v2_training_log.csv"
+    eval_csv_name: "adversary_v2_eval_outputs.csv"
   vector_steering_baseline:
     # Only this run loads target weights locally (activation steering); all other runs use vLLM for target.
     target_inference: local_hf
@@ -134,7 +148,7 @@ scripts:
     coev_v2_mode: coev # coev | eval — omit or null defaults to coev
     coev_v2_rloo_mode: coev # coev | eval — omit or null defaults to coev
     adversary_mode: train # train | eval
-    save_dir: null # optional: --save-dir for adapter checkpoints (coev_v2 / coev_v2_rloo / adversary)
+    save_dir: null # optional: --save-dir for coev_v2 / coev_v2_rloo adapter checkpoints (adversary saves to results_dir/adapters automatically)
     gepa_results_dir: "results/gepa"
     coev_v2_results_dir: "results/coev_v2"
     coev_v2_rloo_results_dir: "results/coev_v2_rloo"

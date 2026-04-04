@@ -86,23 +86,18 @@ runs:
     max_metric_calls: 8
     eval_method: "heuristic"
   adversary:
-    train_size: 8
-    val_size: 4
+    hf_train_size: 8
+    csv_val_size: 2
+    csv_test_size: 3
+    harmbench_csv_path: data/harmbench_behaviors.csv
+    csv_seed: 42
     results_dir: "results/smoke/adversary"
-    adversary_policy: reinforce
-    rs_budget: 5
-    rs_min_successes: 0
     eval_method: "heuristic"
     iterations: 2
     lr: 0.00005
     weight_decay: 0.01
     eval_every: 1
-    train_slice_end: 6
-    eval_slice_start: 6
-    eval_slice_end: 10
     adversary_reinforce_batch_size: 2
-    training_csv_name: "adversary_training_log.csv"
-    eval_csv_name: "adversary_eval_outputs.csv"
   vector_steering_baseline:
     target_inference: local_hf
     train_size: 8

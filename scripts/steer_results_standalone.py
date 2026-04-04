@@ -3,6 +3,7 @@ import json
 import os
 import re
 from abc import ABC, abstractmethod
+from pathlib import Path
 from types import SimpleNamespace
 
 import pandas as pd
@@ -15,20 +16,20 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
 class HarmBenchLoader:
-    """Loads harmful behaviors directly from the official HarmBench GitHub CSV."""
+    """Loads harmful behaviors from ``data/harmbench_behaviors.csv`` (repo root)."""
 
-    GITHUB_RAW_URL = (
-        "https://raw.githubusercontent.com/centerforaisafety/HarmBench/main/data/behavior_datasets/"
-        "harmbench_behaviors_text_all.csv"
-    )
+    DEFAULT_CSV = Path(__file__).resolve().parents[1] / "data" / "harmbench_behaviors.csv"
 
     @staticmethod
     def load_csv(limit: int = None, raw: bool = False):
         try:
-            print("Fetching HarmBench from GitHub...")
-            df = pd.read_csv(HarmBenchLoader.GITHUB_RAW_URL)
-            os.makedirs("data", exist_ok=True)
-            df.to_csv("data/harmbench_behaviors.csv", index=False)
+            path = HarmBenchLoader.DEFAULT_CSV
+            if not path.is_file():
+                raise FileNotFoundError(
+                    f"Missing {path}. Add HarmBench behaviors CSV at data/harmbench_behaviors.csv."
+                )
+            print(f"Loading HarmBench from {path}...")
+            df = pd.read_csv(path)
 
             if not raw:
                 cols_to_map = {"Behavior": "behavior", "SemanticCategory": "category"}

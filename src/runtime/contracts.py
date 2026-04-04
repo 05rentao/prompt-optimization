@@ -85,6 +85,9 @@ class HarmbenchJudgeConfig:
     model_id: str = "cais/HarmBench-Mistral-7b-val-cls"
     #: NF4 4-bit on GPU (~4GB weights vs ~14GB bf16). Set False only if you need exact bf16 judge.
     load_in_4bit: bool = True
+    #: If set, used instead of the default HarmBench Mistral classifier template. Must include
+    #: ``{behavior}`` and ``{generation}`` placeholders for :meth:`HarmbenchJudgeRuntime.judge`.
+    classification_prompt_template: str | None = None
 
 
 @dataclass

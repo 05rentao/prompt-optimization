@@ -136,8 +136,6 @@ def build_adversary_command(o: dict[str, Any]) -> list[str]:
     ]
     if o["device"]:
         cmd.extend(["--device", str(o["device"])])
-    if o.get("save_dir"):
-        cmd.extend(["--save-dir", str(o["save_dir"])])
     return cmd
 
 

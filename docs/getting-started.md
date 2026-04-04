@@ -26,7 +26,7 @@ At a high level, scripts use HarmBench prompts, run target/adversary/judge flows
 
 For consistency, run scripts follow the same top-level phase ordering:
 
-1. `parse_args()` + load defaults via `load_default_config()` (merges `shared_generation` into `runs.*`; see §7)
+1. `parse_args()` + load defaults via `load_default_config()` (merges `shared_generation` into `runs.*`; see section 8)
 2. **`patch_run_args_from_config(defaults, args, run=...)`** (`src/runtime/sessions.py`) on **GEPA, CoEV v2, and adversary** runs — attaches YAML model ids + `runtime_profile` + effective reflection URL/key (after `REFLECTION_VLLM_*` env overrides) for manifests. Legacy **`coev_run.py`** does not use this helper.
 3. `resolve_device(...)` + build `EvaluationConfig`
 4. Build sessions: **`build_vllm_stack(defaults)`** returns `(target_session, reflection_gateway)` for GEPA and CoEV v2; adversary uses **`build_vllm_target_session`** + **`RuntimeCatalog`** for adversary/judge; vector steering uses **`build_local_hf_target_session`**
@@ -126,7 +126,56 @@ RUN_KIND=eval bash scripts/launch_smoke_prime.sh
 MODE=coev_v2_rloo bash scripts/launch_smoke_prime.sh
 ```
 
-## 6) Running locally
+## 6) Interactive inference CLI (`scripts/interactive_infer.py`)
+
+Use this when you want a **single completion** or a **small REPL** against the same runtime stack as the experiment pipelines, without launching a full run.
+
+**What it does**
+
+- Sends one chat turn (`system` + `user` → assistant text), or loops in interactive mode (`-i` / `--interactive`).
+- **Backends:** `--backend local` loads Hugging Face weights on the machine (`LocalHFChatRuntime` in `src/runtime/local_runtimes.py`). `--backend http` calls an OpenAI-compatible server (`OpenAIChatTargetRuntime` in `src/runtime/openai_http.py`), for example local vLLM.
+
+**Configuration**
+
+- Reads `configs/default.yaml` unless you set `PROMPT_OPT_CONFIG_PATH` or pass `--config`. Uses `load_default_config()` like the run scripts.
+- **Default model when `--model` is omitted:** `runtime.models.target_model_name` for `--backend local`, and `runtime.models.reflection_model_name` for `--backend http` (same served-name convention as `build_vllm_target_session` in `src/runtime/sessions.py`).
+- **HTTP URL and key:** Taken from `runtime.reflection` in YAML, with the usual env overrides (`REFLECTION_VLLM_BASE_URL`, `REFLECTION_VLLM_API_KEY`). You can also pass `--base-url` and `--api-key` for one-off tests.
+
+**Prerequisites**
+
+- Dependencies from `uv sync` (or your project venv) so imports match the rest of the repo.
+- **Local:** `HF_TOKEN` or `HUGGINGFACE_HUB_TOKEN` for gated Hub models; GPU recommended. Use `--no-4bit` only if you need full precision and have the VRAM.
+- **HTTP:** A running compatible server; PyTorch is not required for `--backend http` (the script avoids importing `torch` in that mode).
+
+**Examples**
+
+```bash
+# One-shot with defaults from config (local backend loads weights once, then completes)
+uv run python scripts/interactive_infer.py \
+  -s "You are a helpful assistant." \
+  -p "Say hello in one short sentence."
+
+# Explicit HF model and sampling
+uv run python scripts/interactive_infer.py --backend local \
+  --model unsloth/Qwen2.5-7B-Instruct-bnb-4bit \
+  -s "You are a helpful assistant." -p "Hi" \
+  --temperature 0.7 --max-new-tokens 128
+
+# HTTP / vLLM — served `--model` must match the server; optional URL override
+uv run python scripts/interactive_infer.py --backend http \
+  --model meta-llama/Llama-3.1-8B-Instruct \
+  -p "Hello" \
+  --base-url http://127.0.0.1:8001/v1
+
+# REPL: optional system line, then user line; type quit or exit to stop
+uv run python scripts/interactive_infer.py -i --model unsloth/Qwen2.5-7B-Instruct-bnb-4bit
+```
+
+**Prompts from files:** Prefix a path with `@` for `--system` or `--prompt` / `-p` (for example `-p @/tmp/prompt.txt`) to load multiline text without cramming it into the shell.
+
+**Reference:** `uv run python scripts/interactive_infer.py --help`.
+
+## 7) Running locally
 
 ### Prerequisites
 
@@ -194,7 +243,7 @@ If a model check fails, confirm:
 - your Hugging Face account accepted model license/gated terms if required
 - model IDs in `configs/default.yaml` match repositories you can access
 
-## 7) Full configuration reference (`configs/default.yaml`)
+## 8) Full configuration reference (`configs/default.yaml`)
 
 This section explains each config block in plain language.
 
@@ -211,7 +260,7 @@ Typical fields:
 
 Smoke configs (`configs/smoke.yaml`, `configs/smoke_eval.yaml`) define their own `shared_generation` (smaller budgets, stricter prompts). **`configs/prompt_reference.yaml`** stores historical prompt strings for documentation only; nothing imports it.
 
-### 7.1 Swapability status (what is truly config-driven)
+### 8.1 Swapability status (what is truly config-driven)
 
 Legend:
 
@@ -252,7 +301,7 @@ Legend:
 | `scripts.unified_runner.adversary_results_dir` | Easy swap | adversary output root | Unified runner. |
 | `scripts.unified_runner.runtime_profile` | Deprecated/legacy | N/A in current launcher logic | Present in config/docs but not used by `scripts/run_unified_experiment.py`. |
 
-### 7.2 Practical interpretation
+### 8.2 Practical interpretation
 
 - Target inference for most runs is **HTTP** to the same vLLM process as GEPA reflection (`OpenAIChatTargetRuntime`). Launch scripts set `REFLECTION_VLLM_BASE_URL` to point Python at the server.
 - **Vector steering** is the exception: it requires local weights and uses `runs.vector_steering_baseline.target_inference: local_hf`.
@@ -338,7 +387,7 @@ Legend:
 - `gepa_results_dir`, `coev_v2_results_dir`, `coev_v2_rloo_results_dir`, `adversary_results_dir`: output roots.
 - `runtime_profile`: metadata label (legacy).
 
-## 8) Common artifacts and why they matter
+## 9) Common artifacts and why they matter
 
 Most runs save a combination of:
 
@@ -388,7 +437,7 @@ How to use them:
 - optimizer trajectory plot
 - `run_manifest.json`
 
-## 9) `src/` and `src/runtime/` orientation
+## 10) `src/` and `src/runtime/` orientation
 
 Top-level responsibilities:
 
@@ -421,7 +470,7 @@ Main modularity components:
 - `src/run_pipeline.py`
   - shared orchestration helpers across runs
 
-## 10) Suggested teammate workflow for making changes
+## 11) Suggested teammate workflow for making changes
 
 1. Pick one run script as the target behavior.
 2. Keep reusable logic in `src/`, not in `runs/`.
@@ -432,7 +481,7 @@ Main modularity components:
    - `src/README.md` and/or `src/runtime/README.md` if internal APIs changed
 5. Run a short-budget smoke test before large Prime jobs.
 
-## 11) Streamlining opportunities across runs
+## 12) Streamlining opportunities across runs
 
 - Centralize baseline/final evaluation scaffolding into one helper returning `(metrics, rows)` with a consistent schema.
 - Standardize CSV column names across runs (for example `target_response` vs `target_resp`) for easier downstream analysis.
@@ -440,7 +489,7 @@ Main modularity components:
 - Unify artifact writers so every run emits a minimal common contract: `metrics.json`, `baseline.csv`, `final.csv`, and `run_manifest.json`.
 - Reflection bootstrap is centralized in **`build_vllm_stack`**, **`patch_run_args_from_config`**, and **`OpenAIReflectionGateway.verify`**; further unification would be optional convenience only.
 
-## 12) Minimal command cheat sheet
+## 13) Minimal command cheat sheet
 
 ```bash
 uv sync

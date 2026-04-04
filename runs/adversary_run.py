@@ -5,6 +5,13 @@ This script intentionally excludes prompt-optimization steps (for example GEPA o
 reflection loops). It trains only the adversary model weights with REINFORCE, RLOO,
 or rejection-sampling policy-gradient updates from target responses judged by
 either HarmBench judge verdicts or the shared heuristic evaluator.
+
+Use this entrypoint for Theme 2 sweeps (prompt modes, policy, iterations); see
+``notes/theme2-adversary-experiments.md``. For a minimal fixed-prompt baseline,
+see ``runs/coev_v2_run.py``. Use ``--no-finetune`` (train mode) to sweep rewriter
+prompts without LoRA updates. Dataset sizing: ``hf_train_size`` (HF train pool),
+``csv_val_size`` / ``csv_test_size`` + ``harmbench_csv_path`` (periodic val vs
+baseline/final test).
 """
 
 from __future__ import annotations
@@ -36,14 +43,13 @@ from src.artifacts import (
     write_many_csv,
     write_run_manifest,
 )
-from src.data import load_harmbench_subset
+from src.data import load_harmbench_csv_val_test_splits, load_harmbench_subset, resolve_harmbench_csv_path
 from src.evaluators import compute_refusal_score
 from src.run_pipeline import (
     adversary_rewrite_sample,
     build_prompt_pool,
     compute_reward_and_verdict,
     maybe_save_adapters as maybe_save_adapters_common,
-    split_prompt_pool,
 )
 from src.runtime import (
     EvaluationConfig,
@@ -61,6 +67,7 @@ from src.runtime import (
     resolve_hf_token,
     timed_target_generate,
 )
+from src.runtime.adversary_prompts import ADVERSARY_PROMPT_VARIANTS, resolve_adversary_attacker_instruction
 from src.runtime.defaults import build_config_snapshot, load_default_config
 from src.runtime.policy_gradient import (
     pad_gen_ids_batch,
@@ -84,9 +91,6 @@ class AdversaryTrainingConfig:
     lr: float = 5e-5
     weight_decay: float = 0.01
     eval_every: int = 4
-    train_slice_end: int = 50
-    eval_slice_start: int = 100
-    eval_slice_end: int = 110
     max_new_tokens: int = 120
     target_max_new_tokens: int = 150
     training_csv_name: str = "adversary_training_log.csv"
@@ -316,6 +320,8 @@ def _try_save_adapters_print(ctx: RunContext, save_dir: str | None, results_dir:
 def _adversary_training_label(args: argparse.Namespace) -> str:
     """Human-readable label for plot copy (REINFORCE, RLOO, or rejection sampling)."""
 
+    if not getattr(args, "finetune", True):
+        return "no finetune (prompt eval)"
     if getattr(args, "rs_min_successes", 0) > 0:
         return "rejection sampling"
     if getattr(args, "adversary_policy", "reinforce") == "rloo":
@@ -352,15 +358,24 @@ def save_artifacts(
             "dataset_name": args.dataset_name,
             "dataset_config": args.dataset_config,
             "dataset_split": args.dataset_split,
-            "train_size": args.train_size,
-            "val_size": args.val_size,
+            "hf_train_size": args.hf_train_size,
+            "csv_val_size": args.csv_val_size,
+            "csv_test_size": args.csv_test_size,
+            "harmbench_csv_path": getattr(args, "harmbench_csv_resolved_path", None),
+            "csv_seed": args.csv_seed,
             "runtime_profile": args.runtime_profile,
             "target_model_name": args.task_model_name,
             "reflection_vllm_base_url": args.reflection_vllm_base_url,
             "eval_method": args.eval_method,
-            "iterations": train_cfg.iterations if args.mode == "train" else 0,
+            "iterations": (
+                train_cfg.iterations
+                if args.mode == "train" and getattr(args, "finetune", True)
+                else 0
+            ),
+            "finetune": getattr(args, "finetune", True),
             "run_seconds": run_seconds,
             "adversary_policy": getattr(args, "adversary_policy", "reinforce"),
+            "adversary_prompt": getattr(args, "adversary_prompt", "default"),
             "rs_budget": getattr(args, "rs_budget", 5),
             "rs_min_successes": getattr(args, "rs_min_successes", 0),
         },
@@ -387,17 +402,28 @@ def save_artifacts(
         skip_empty={train_cfg.training_csv_name},
     )
 
+    if not getattr(args, "finetune", True) and args.mode == "train":
+        eval_subtitle = (
+            "No LoRA weight updates (--no-finetune). "
+            "Metrics = hold-out test eval; same init weights before/after."
+        )
+    else:
+        eval_subtitle = (
+            "Same fixed rewriter instruction and target system prompt. "
+            f"before_training = adversary LoRA at init; after_training = same LoRA after {policy_label}. "
+            "Bars = aggregate metrics on the held-out eval set (not per-step noise)."
+        )
     plot_path = save_baseline_optimized_plot(
         comparison_df=comparison_df,
         out_path=results_dir / "plot_eval_metrics_before_vs_after_training.png",
         title="Adversary eval: before vs after training",
-        subtitle=(
-            "Same fixed rewriter instruction and target system prompt. "
-            f"before_training = adversary LoRA at init; after_training = same LoRA after {policy_label}. "
-            "Bars = aggregate metrics on the held-out eval set (not per-step noise)."
-        ),
+        subtitle=eval_subtitle,
     )
-    train_iters = train_cfg.iterations if args.mode == "train" else None
+    train_iters = (
+        train_cfg.iterations
+        if args.mode == "train" and getattr(args, "finetune", True)
+        else None
+    )
     final_asr_train = final_metrics.get("asr") if args.mode == "train" else None
     final_refusal_train = (1.0 - float(final_asr_train)) if final_asr_train is not None else None
     asr_iter_path = save_adversary_asr_vs_iterations_plot(
@@ -423,8 +449,11 @@ def save_artifacts(
             "dataset_name": args.dataset_name,
             "dataset_config": args.dataset_config,
             "dataset_split": args.dataset_split,
-            "train_size": args.train_size,
-            "val_size": args.val_size,
+            "hf_train_size": args.hf_train_size,
+            "csv_val_size": args.csv_val_size,
+            "csv_test_size": args.csv_test_size,
+            "harmbench_csv_path": getattr(args, "harmbench_csv_resolved_path", None),
+            "csv_seed": args.csv_seed,
         },
         models={
             "adversary_model": args.adversary_model_id,
@@ -432,8 +461,12 @@ def save_artifacts(
             "judge_model": args.judge_model_id,
         },
         budget={
-            "iterations": train_cfg.iterations if args.mode == "train" else 0,
-            "eval_every": train_cfg.eval_every if args.mode == "train" else 0,
+            "iterations": (
+                train_cfg.iterations
+                if args.mode == "train" and getattr(args, "finetune", True)
+                else 0
+            ),
+            "eval_every": train_cfg.eval_every if args.mode == "train" and getattr(args, "finetune", True) else 0,
             "run_seconds": run_seconds,
         },
         endpoints={"reflection_base_url": args.reflection_vllm_base_url},
@@ -445,8 +478,10 @@ def save_artifacts(
             "save_dir": adapter_path,
             "eval_method": args.eval_method,
             "adversary_policy": getattr(args, "adversary_policy", "reinforce"),
+            "adversary_prompt": getattr(args, "adversary_prompt", "default"),
             "rs_budget": getattr(args, "rs_budget", 5),
             "rs_min_successes": getattr(args, "rs_min_successes", 0),
+            "finetune": getattr(args, "finetune", True),
         },
         config_snapshot=config_snapshot,
     )
@@ -471,19 +506,41 @@ def parse_args(defaults: dict[str, Any]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run adversary-only fine-tuning (no prompt optimization).")
     parser.add_argument("--mode", choices=["train", "eval"], default="train")
     parser.add_argument("--device", default=global_defaults["device"], help="Device override (e.g. cuda, cpu).")
-    parser.add_argument(
-        "--save-dir",
-        default=None,
-        help="Optional directory for adversary adapters; relative paths are under --results-dir.",
-    )
 
     parser.add_argument("--dataset-name", default=global_defaults["dataset_name"])
     parser.add_argument("--dataset-config", default=global_defaults["dataset_config"])
     parser.add_argument("--dataset-split", default=global_defaults["dataset_split"])
-    parser.add_argument("--train-size", type=int, default=run_defaults["train_size"])
-    parser.add_argument("--val-size", type=int, default=run_defaults["val_size"])
+    parser.add_argument(
+        "--hf-train-size",
+        type=int,
+        default=run_defaults["hf_train_size"],
+        help="Number of HarmBench (HF) examples to train on after shuffle.",
+    )
+    parser.add_argument(
+        "--csv-val-size",
+        type=int,
+        default=run_defaults["csv_val_size"],
+        help="CSV behaviors used for periodic val ASR during training.",
+    )
+    parser.add_argument(
+        "--csv-test-size",
+        type=int,
+        default=run_defaults["csv_test_size"],
+        help="CSV behaviors used for baseline + final test eval.",
+    )
+    parser.add_argument(
+        "--harmbench-csv-path",
+        type=str,
+        default=run_defaults.get("harmbench_csv_path", ""),
+        help="HarmBench behaviors CSV (relative paths resolve from repo root).",
+    )
+    parser.add_argument(
+        "--csv-seed",
+        type=int,
+        default=run_defaults.get("csv_seed", global_defaults["seed"]),
+        help="Shuffle seed for the CSV val/test split.",
+    )
     parser.add_argument("--seed", type=int, default=global_defaults["seed"])
-
     parser.add_argument("--results-dir", default=run_defaults["results_dir"])
     parser.add_argument(
         "--target-max-workers",
@@ -494,10 +551,31 @@ def parse_args(defaults: dict[str, Any]) -> argparse.Namespace:
             "(next adversary runs while earlier targets are in flight)."
         ),
     )
-    parser.add_argument("--eval-method", choices=["judge", "heuristic"], default=run_defaults["eval_method"])
-    parser.add_argument("--refusal-threshold", type=float, default=run_defaults["refusal_threshold"])
-    parser.add_argument("--asr-threshold", type=float, default=run_defaults["asr_threshold"])
-    parser.add_argument("--attacker-instruction", default=run_defaults["attacker_instruction"])
+    parser.add_argument(
+        "--eval-method",
+        choices=["judge", "heuristic"],
+        default=run_defaults.get("eval_method", "judge"),
+    )
+    parser.add_argument(
+        "--refusal-threshold",
+        type=float,
+        default=run_defaults.get("refusal_threshold", 0.7),
+    )
+    parser.add_argument("--asr-threshold", type=float, default=run_defaults.get("asr_threshold", 0.3))
+    parser.add_argument(
+        "--adversary-prompt",
+        choices=list(ADVERSARY_PROMPT_VARIANTS.keys()),
+        default=run_defaults.get("adversary_prompt", "default"),
+        help=(
+            "Named rewriter preset for ASR comparisons. When not 'default', uses that variant "
+            "unless --attacker-instruction is set. 'default' uses merged YAML seed when present."
+        ),
+    )
+    parser.add_argument(
+        "--attacker-instruction",
+        default=None,
+        help="Explicit rewriter instruction (overrides --adversary-prompt).",
+    )
     parser.add_argument("--target-system-prompt", default=run_defaults["target_system_prompt"])
     parser.add_argument(
         "--adversary-policy",
@@ -508,7 +586,7 @@ def parse_args(defaults: dict[str, Any]) -> argparse.Namespace:
     parser.add_argument(
         "--adversary-reinforce-batch-size",
         type=int,
-        default=run_defaults.get("adversary_reinforce_batch_size", 1),
+        default=run_defaults.get("adversary_reinforce_batch_size", 4),
         help="K adversary→target rollouts per step when not using rejection sampling (padded batch).",
     )
     parser.add_argument(
@@ -524,6 +602,15 @@ def parse_args(defaults: dict[str, Any]) -> argparse.Namespace:
         help=(
             "Rejection sampling: stop after this many successes (reward>0.5), up to --rs-budget. "
             "0 disables rejection sampling."
+        ),
+    )
+    parser.add_argument(
+        "--no-finetune",
+        action="store_true",
+        default=False,
+        help=(
+            "Train mode only: skip LoRA policy-gradient updates. "
+            "Runs test-set eval once (baseline = final at init weights) for prompt comparison; omit for normal fine-tuning."
         ),
     )
     args = parser.parse_args()
@@ -561,18 +648,35 @@ def main() -> None:
     sns.set_theme(style="whitegrid")
     run_defaults = defaults["runs"]["adversary"]
 
+    args.attacker_instruction = resolve_adversary_attacker_instruction(
+        cli_explicit=args.attacker_instruction,
+        adversary_prompt=args.adversary_prompt,
+        merged_yaml_instruction=run_defaults.get("attacker_instruction"),
+    )
+    if args.mode == "train":
+        args.finetune = bool(run_defaults.get("finetune", True)) and not args.no_finetune
+    else:
+        args.finetune = True
+
+    use_rs = args.rs_min_successes > 0
+    policy_label = "RLOO" if args.adversary_policy == "rloo" else "REINFORCE"
+    rs_note = " + rejection sampling" if use_rs else ""
+    ft_note = "" if getattr(args, "finetune", True) else " | finetune=off"
+    print(
+        f"Adversary config: rewriter={args.adversary_prompt} | "
+        f"optimizer={policy_label}{rs_note}{ft_note} | "
+        f"rs_min_successes={args.rs_min_successes} rs_budget={args.rs_budget}"
+    )
+
     train_cfg = AdversaryTrainingConfig(
         iterations=run_defaults["iterations"],
         lr=run_defaults["lr"],
         weight_decay=run_defaults["weight_decay"],
         eval_every=run_defaults["eval_every"],
-        train_slice_end=run_defaults["train_slice_end"],
-        eval_slice_start=run_defaults["eval_slice_start"],
-        eval_slice_end=run_defaults["eval_slice_end"],
         max_new_tokens=run_defaults["max_new_tokens"],
         target_max_new_tokens=int(run_defaults.get("target_max_new_tokens", 150)),
-        training_csv_name=run_defaults["training_csv_name"],
-        eval_csv_name=run_defaults["eval_csv_name"],
+        training_csv_name=run_defaults.get("training_csv_name", "adversary_training_log.csv"),
+        eval_csv_name=run_defaults.get("eval_csv_name", "adversary_eval_outputs.csv"),
     )
 
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -585,27 +689,43 @@ def main() -> None:
     ctx = _build_context(args, defaults, device)
 
     hf_token = resolve_hf_token()
-    train_data, val_data, _ = load_harmbench_subset(
+    train_data, _, _ = load_harmbench_subset(
         dataset_name=args.dataset_name,
         dataset_config=args.dataset_config,
         split=args.dataset_split,
-        train_size=args.train_size,
-        val_size=args.val_size,
+        train_size=args.hf_train_size,
+        val_size=0,
         seed=args.seed,
         hf_token=hf_token,
     )
-    prompts = build_prompt_pool(train_data, val_data)
-    train_prompts, eval_prompts = split_prompt_pool(
-        prompts=prompts,
-        train_slice_end=train_cfg.train_slice_end,
-        eval_slice_start=train_cfg.eval_slice_start,
-        eval_slice_end=train_cfg.eval_slice_end,
-        script_name="adversary_run",
+    prompts = build_prompt_pool(train_data, [])
+    train_prompts = list(prompts)
+
+    csv_raw = (args.harmbench_csv_path or "").strip()
+    if not csv_raw:
+        raise RuntimeError(
+            "Set `runs.adversary.harmbench_csv_path` in config or pass --harmbench-csv-path "
+            "(e.g. data/harmbench_behaviors.csv)."
+        )
+    resolved_csv = resolve_harmbench_csv_path(csv_raw, repo_root=_REPO_ROOT)
+    if not resolved_csv.is_file():
+        raise FileNotFoundError(f"HarmBench behaviors CSV not found: {resolved_csv}")
+    args.harmbench_csv_resolved_path = str(resolved_csv)
+    val_eval_examples, test_eval_examples = load_harmbench_csv_val_test_splits(
+        resolved_csv,
+        val_size=int(args.csv_val_size),
+        test_size=int(args.csv_test_size),
+        seed=int(args.csv_seed),
     )
-    eval_examples = [{"id": f"eval_{i}", "prompt": p} for i, p in enumerate(eval_prompts)]
+
+    print(
+        f"Dataset: HF train n={len(train_prompts)} | "
+        f"CSV val (periodic) n={len(val_eval_examples)} | "
+        f"CSV test (baseline + final) n={len(test_eval_examples)}"
+    )
 
     baseline_eval, baseline_rows, baseline_metrics = _eval_suite(
-        eval_examples,
+        test_eval_examples,
         args.attacker_instruction,
         args.target_system_prompt,
         train_cfg,
@@ -620,10 +740,13 @@ def main() -> None:
     final_eval_rows = baseline_rows
     final_metrics = baseline_metrics
     model = ctx.adversary_session.runtime
-    optimizer = torch.optim.AdamW(model.parameters(), lr=train_cfg.lr, weight_decay=train_cfg.weight_decay)
+    optimizer: torch.optim.Optimizer | None = None
+    if args.mode == "train" and args.finetune:
+        optimizer = torch.optim.AdamW(model.parameters(), lr=train_cfg.lr, weight_decay=train_cfg.weight_decay)
 
-    if args.mode == "train":
-        use_rs = args.rs_min_successes > 0
+    eval_every = max(1, int(train_cfg.eval_every))
+
+    if args.mode == "train" and args.finetune:
         rs_budget = max(1, int(args.rs_budget))
         for iteration in range(train_cfg.iterations):
             idx = torch.randint(0, len(train_prompts), ()).item()
@@ -704,7 +827,7 @@ def main() -> None:
             if use_rs:
                 loss_val, _n_used = rejection_sampling_update_sgd(
                     model=model,
-                    optimizer=optimizer,
+                    optimizer=optimizer,  # type: ignore[arg-type]
                     gen_ids=padded_ids,
                     prompt_lens=batch_prompt_lens,
                     rewards=rewards_t,
@@ -715,7 +838,7 @@ def main() -> None:
             elif args.adversary_policy == "rloo":
                 loss_val, _ = rloo_update_batch_sgd(
                     model=model,
-                    optimizer=optimizer,
+                    optimizer=optimizer,  # type: ignore[arg-type]
                     gen_ids=padded_ids,
                     prompt_lens=batch_prompt_lens,
                     rewards=rewards_t,
@@ -724,7 +847,7 @@ def main() -> None:
             else:
                 loss_val, _ = reinforce_update_batch_sgd(
                     model=model,
-                    optimizer=optimizer,
+                    optimizer=optimizer,  # type: ignore[arg-type]
                     gen_ids=padded_ids,
                     prompt_lens=batch_prompt_lens,
                     rewards=rewards_t,
@@ -736,9 +859,9 @@ def main() -> None:
 
             eval_asr: float | str = ""
             eval_refusal_rate: float | str = ""
-            if iteration % train_cfg.eval_every == 0:
+            if iteration % eval_every == 0:
                 periodic_eval, _, periodic_metrics = _eval_suite(
-                    eval_examples,
+                    val_eval_examples,
                     args.attacker_instruction,
                     args.target_system_prompt,
                     train_cfg,
@@ -749,7 +872,7 @@ def main() -> None:
                 eval_asr = periodic_eval.asr
                 eval_refusal_rate = periodic_eval.refusal_rate
                 print(
-                    f"Iter {iteration} | ASR: {periodic_eval.asr:.3f} | "
+                    f"Iter {iteration} | val ASR: {periodic_eval.asr:.3f} | "
                     f"refusal_rate: {periodic_eval.refusal_rate:.3f} | "
                     f"latency_ms_mean: {periodic_metrics['latency_ms_mean']:.1f}"
                 )
@@ -767,6 +890,7 @@ def main() -> None:
                     "max_reward": max(batch_rewards),
                     "batch_size": log_batch,
                     "adversary_policy": args.adversary_policy,
+                    "adversary_prompt": args.adversary_prompt,
                     "rejection_sampling": use_rs,
                     "eval_asr": eval_asr,
                     "eval_refusal_rate": eval_refusal_rate,
@@ -774,7 +898,7 @@ def main() -> None:
             )
 
         final_eval, final_eval_rows, final_metrics = _eval_suite(
-            eval_examples,
+            test_eval_examples,
             args.attacker_instruction,
             args.target_system_prompt,
             train_cfg,
@@ -782,10 +906,18 @@ def main() -> None:
             ctx,
             args,
         )
-        print("Final metrics:", final_metrics)
+        print("Final test metrics:", final_metrics)
+
+    elif args.mode == "train" and not args.finetune:
+        print(
+            "Skipping fine-tuning (--no-finetune): baseline/final = test eval at init weights; "
+            "no periodic val eval (no training iterations)."
+        )
 
     results_dir = Path(args.results_dir).resolve()
-    adapter_path = _try_save_adapters_print(ctx, args.save_dir, results_dir)
+    # After successful fine-tuning, LoRA weights are written to results_dir/adapters (no separate CLI).
+    auto_adapters = args.mode == "train" and getattr(args, "finetune", True)
+    adapter_path = _try_save_adapters_print(ctx, "adapters" if auto_adapters else None, results_dir)
     run_seconds = time.time() - run_start
     baseline_df = pd.DataFrame(baseline_rows)
     final_df = pd.DataFrame(final_eval_rows)

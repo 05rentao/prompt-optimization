@@ -136,6 +136,9 @@ def apply_shared_generation_defaults(payload: dict[str, Any]) -> dict[str, Any]:
         if k in eth and eth[k] is not None:
             adversary_base[k] = eth[k]
 
+    # Same shared_generation merge as adversary (CSV eval, target tokens, judge thresholds).
+    adversary_v2_base: dict[str, Any] = dict(adversary_base)
+
     vsb_base: dict[str, Any] = {}
     if target is not None:
         vsb_base["seed_prompt"] = target
@@ -150,6 +153,7 @@ def apply_shared_generation_defaults(payload: dict[str, Any]) -> dict[str, Any]:
         ("coev", coev_base),
         ("coev_v2", coev_v2_base),
         ("adversary", adversary_base),
+        ("adversary_v2", adversary_v2_base),
         ("vector_steering_baseline", vsb_base),
     ):
         if not base:

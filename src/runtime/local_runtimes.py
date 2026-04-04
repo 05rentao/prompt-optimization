@@ -133,6 +133,11 @@ class HarmbenchJudgeRuntime:
             truncation_side="left",
             padding_side="left",
         )
+        self._cls_prompt_template = (
+            cfg.classification_prompt_template
+            if cfg.classification_prompt_template is not None
+            else MISTRAL_CLS_PROMPT["prompt"]
+        )
 
     def judge(self, behaviors: str | Iterable[str], generations: list[str]) -> list[str]:
         """Return classifier completions (e.g. yes/no) for each generation."""
@@ -144,7 +149,7 @@ class HarmbenchJudgeRuntime:
                 raise ValueError("behaviors and generations must have the same length.")
 
         inputs = [
-            MISTRAL_CLS_PROMPT["prompt"].format(behavior=behavior, generation=generation)
+            self._cls_prompt_template.format(behavior=behavior, generation=generation)
             for behavior, generation in zip(behavior_list, generations, strict=True)
         ]
         encoded = self.tokenizer(inputs, return_tensors="pt", padding="longest")

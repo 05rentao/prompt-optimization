@@ -9,7 +9,7 @@ Some runs only train adversary weights, while others optimize attacker/defense p
 Use these docs in this order:
 
 1. `README.md` (this file): project overview and quick start.
-2. `docs/getting-started.md`: full onboarding, setup, configuration, and runbook.
+2. `docs/getting-started.md`: full onboarding, setup, configuration, runbook, and **section 6 — interactive inference CLI** (`scripts/interactive_infer.py`).
 3. `docs/run_on_prime_guide.md`: end-to-end Prime/H100 setup and launch guide.
 4. `src/README.md`: contributor guide for `src/` architecture and extension patterns.
 5. `src/runtime/README.md`: **authoritative** runtime API reference (modules, `build_vllm_stack`, reflection `verify`, evaluation metrics). **Where to edit** experiment code vs shared plumbing: **Contributing** section below in this file.
@@ -24,7 +24,7 @@ Use this map to quickly find where to work.
 Core project code and launch entrypoints:
 - `runs/`: experiment entry scripts (`gepa`, `coev_v2`, `coev_v2_rloo` via unified runner, `adversary`; legacy `coev_run.py` kept for reference).
 - `src/`: shared library code used by all runs (data, evaluation, artifacts, runtime adapters).
-- `scripts/`: convenience wrappers for unified CLI and Prime/cluster launchers.
+- `scripts/`: convenience wrappers for unified CLI, Prime/cluster launchers, and **`interactive_infer.py`** (ad-hoc local or HTTP chat inference; documented in `docs/getting-started.md`, section 6).
 - `configs/`: YAML config presets (`default.yaml`, `smoke.yaml`, `smoke_eval.yaml`). Shared prompts and sampling defaults live under `shared_generation` and are merged into each `runs.<name>` block when you load config (see `src/runtime/defaults.py`). `configs/prompt_reference.yaml` lists legacy prompt strings for reference only (not loaded by code).
 - `data/`: local input datasets/resources used by runs.
 
@@ -58,6 +58,13 @@ uv run python scripts/run_unified_experiment.py --mode gepa
 uv run python scripts/run_unified_experiment.py --mode coev_v2
 uv run python scripts/run_unified_experiment.py --mode coev_v2_rloo
 uv run python scripts/run_unified_experiment.py --mode adversary
+```
+
+Ad-hoc inference (system + user prompts, optional REPL; local HF or OpenAI-compatible server — details in `docs/getting-started.md`, section 6):
+
+```bash
+uv run python scripts/interactive_infer.py --help
+uv run python scripts/interactive_infer.py -s "You are a helpful assistant." -p "Say hi in one sentence."
 ```
 
 Prime/cluster launcher:
