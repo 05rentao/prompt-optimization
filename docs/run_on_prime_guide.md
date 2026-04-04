@@ -205,6 +205,16 @@ Using your own launch shell launch script: (replace with your script path)
 chmod +x ./scripts/launch_vector_steering_prime.sh
 ```
 
+Or use simply open a new terminal and put the vllm server for the models target and reflection there
+```bash
+uv run python -m vllm.entrypoints.openai.api_server \
+  --model meta-llama/Llama-3.1-8B-Instruct \
+  --port 8001 \
+  --gpu-memory-utilization 0.40 \
+  --max-model-len 2048 \
+  --enforce-eager > vllm.log 2>&1 &
+```
+
 Use `uv run python` for all project scripts (never bare `python` / `python3`). Example:
 ```bash
 uv run python runs/gepa_run.py --help

@@ -24,7 +24,7 @@ if str(REPO_ROOT) not in sys.path:
 from src.runtime.defaults import load_default_config
 GEPA_SCRIPT = REPO_ROOT / "runs" / "gepa_run.py"
 COEV_V2_SCRIPT = REPO_ROOT / "runs" / "coev_v2_run.py"
-ADVERSARY_SCRIPT = REPO_ROOT / "runs" / "adversary_run.py"
+ADVERSARY_SCRIPT = REPO_ROOT / "scripts" / "adversary.py"
 
 
 def _resolve_orchestration(defaults: dict[str, Any]) -> dict[str, Any]:

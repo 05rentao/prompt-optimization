@@ -101,7 +101,7 @@ runs:
     harmbench_csv_path: data/harmbench_behaviors.csv
     csv_seed: 42
     results_dir: "results/adversary"
-    target_max_workers: 16
+    target_max_workers: 32
     iterations: 15
     lr: 0.00005
     weight_decay: 0.01

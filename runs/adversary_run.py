@@ -47,6 +47,7 @@ from src.data import load_harmbench_csv_val_test_splits, load_harmbench_subset, 
 from src.evaluators import compute_refusal_score
 from src.run_pipeline import (
     adversary_rewrite_sample,
+    adversary_rewriter_system_content,
     build_prompt_pool,
     compute_reward_and_verdict,
     maybe_save_adapters as maybe_save_adapters_common,
@@ -203,7 +204,8 @@ def evaluate_asr(
     target_latencies: list[float] = []
 
     if not use_target_pool:
-        for ex in eval_examples:
+        for i, ex in enumerate(eval_examples, start=1):
+            print(f"evaluate_asr {i}/{n}", flush=True)
             sample, adv_latency_ms = adversary_output(
                 prompt=ex["prompt"],
                 attacker_instruction=attacker_instruction,
@@ -224,7 +226,8 @@ def evaluate_asr(
     else:
         pending: list[tuple[dict[str, Any], dict[str, Any], float, Future[tuple[str, float]]]] = []
         with ThreadPoolExecutor(max_workers=workers) as executor:
-            for ex in eval_examples:
+            for i, ex in enumerate(eval_examples, start=1):
+                print(f"evaluate_asr {i}/{n}", flush=True)
                 sample, adv_latency_ms = adversary_output(
                     prompt=ex["prompt"],
                     attacker_instruction=attacker_instruction,
@@ -346,79 +349,111 @@ def save_artifacts(
 
     Prompts are fixed for the run (from CLI/config); artifacts compare **adversary
     weights** before vs after policy-gradient training, not prompt optimization.
-    Instruction and target system prompt text are not written to disk.
+    Full rewriter and target system prompt strings are recorded in ``run_manifest.json``
+    under ``extra.prompts``.
+
+    When there is no fine-tuning (``--no-finetune`` or ``--mode eval``), only one test
+    eval exists; we write ``eval_outputs.csv`` / ``eval_metrics.csv`` and omit the
+    before/after comparison plot and duplicate CSVs.
+
+    Prompts are written to ``adversary_run_metrics.json`` (``prompts``), ``prompts.json``,
+    and ``run_manifest.json`` (``extra.prompts``).
     """
 
     results_dir.mkdir(parents=True, exist_ok=True)
-    policy_label = _adversary_training_label(args)
+    compare_before_after = args.mode == "train" and getattr(args, "finetune", True)
 
-    metrics_payload: dict[str, Any] = {
-        "config": {
-            "mode": args.mode,
-            "dataset_name": args.dataset_name,
-            "dataset_config": args.dataset_config,
-            "dataset_split": args.dataset_split,
-            "hf_train_size": args.hf_train_size,
-            "csv_val_size": args.csv_val_size,
-            "csv_test_size": args.csv_test_size,
-            "harmbench_csv_path": getattr(args, "harmbench_csv_resolved_path", None),
-            "csv_seed": args.csv_seed,
-            "runtime_profile": args.runtime_profile,
-            "target_model_name": args.task_model_name,
-            "reflection_vllm_base_url": args.reflection_vllm_base_url,
-            "eval_method": args.eval_method,
-            "iterations": (
-                train_cfg.iterations
-                if args.mode == "train" and getattr(args, "finetune", True)
-                else 0
-            ),
-            "finetune": getattr(args, "finetune", True),
-            "run_seconds": run_seconds,
-            "adversary_policy": getattr(args, "adversary_policy", "reinforce"),
-            "adversary_prompt": getattr(args, "adversary_prompt", "default"),
-            "rs_budget": getattr(args, "rs_budget", 5),
-            "rs_min_successes": getattr(args, "rs_min_successes", 0),
-        },
-        "baseline_metrics": baseline_metrics,
-        "final_metrics": final_metrics,
+    config_block: dict[str, Any] = {
+        "mode": args.mode,
+        "dataset_name": args.dataset_name,
+        "dataset_config": args.dataset_config,
+        "dataset_split": args.dataset_split,
+        "hf_train_size": args.hf_train_size,
+        "csv_val_size": args.csv_val_size,
+        "csv_test_size": args.csv_test_size,
+        "harmbench_csv_path": getattr(args, "harmbench_csv_resolved_path", None),
+        "csv_seed": args.csv_seed,
+        "runtime_profile": args.runtime_profile,
+        "target_model_name": args.task_model_name,
+        "reflection_vllm_base_url": args.reflection_vllm_base_url,
+        "eval_method": args.eval_method,
+        "iterations": (
+            train_cfg.iterations
+            if args.mode == "train" and getattr(args, "finetune", True)
+            else 0
+        ),
+        "finetune": getattr(args, "finetune", True),
+        "run_seconds": run_seconds,
+        "adversary_policy": getattr(args, "adversary_policy", "reinforce"),
+        "adversary_prompt": getattr(args, "adversary_prompt", "default"),
+        "rs_budget": getattr(args, "rs_budget", 5),
+        "rs_min_successes": getattr(args, "rs_min_successes", 0),
     }
+    prompts_payload = {
+        "adversary_prompt_variant": getattr(args, "adversary_prompt", "default"),
+        "adversary_attacker_instruction": args.attacker_instruction,
+        "adversary_rewriter_system_message": adversary_rewriter_system_content(
+            args.attacker_instruction
+        ),
+        "target_system_prompt": args.target_system_prompt,
+    }
+    if compare_before_after:
+        metrics_payload: dict[str, Any] = {
+            "config": config_block,
+            "eval_kind": "before_after_training",
+            "prompts": prompts_payload,
+            "baseline_metrics": baseline_metrics,
+            "final_metrics": final_metrics,
+        }
+    else:
+        metrics_payload = {
+            "config": config_block,
+            "eval_kind": "single_test_eval",
+            "prompts": prompts_payload,
+            "test_eval_metrics": baseline_metrics,
+        }
     metrics_json_path = results_dir / "adversary_run_metrics.json"
     write_json(metrics_json_path, metrics_payload)
+    prompts_json_path = results_dir / "prompts.json"
+    write_json(prompts_json_path, prompts_payload)
 
-    comparison_df = build_baseline_optimized_df(
-        baseline_metrics=baseline_metrics,
-        optimized_metrics=final_metrics,
-        baseline_variant="before_training",
-        comparison_variant="after_training",
-    )
+    csv_files: dict[str, pd.DataFrame] = {}
+    if compare_before_after:
+        comparison_df = build_baseline_optimized_df(
+            baseline_metrics=baseline_metrics,
+            optimized_metrics=final_metrics,
+            baseline_variant="before_training",
+            comparison_variant="after_training",
+        )
+        csv_files["eval_metrics_before_vs_after_training.csv"] = comparison_df
+        csv_files["eval_outputs_before_training.csv"] = baseline_df
+        csv_files["eval_outputs_after_training.csv"] = final_df
+    else:
+        csv_files["eval_metrics.csv"] = pd.DataFrame([{"variant": "test_eval", **baseline_metrics}])
+        csv_files["eval_outputs.csv"] = baseline_df
+    csv_files[train_cfg.training_csv_name] = training_df
     write_many_csv(
         results_dir,
-        {
-            "eval_metrics_before_vs_after_training.csv": comparison_df,
-            "eval_outputs_before_training.csv": baseline_df,
-            "eval_outputs_after_training.csv": final_df,
-            train_cfg.training_csv_name: training_df,
-        },
+        csv_files,
         skip_empty={train_cfg.training_csv_name},
     )
 
-    if not getattr(args, "finetune", True) and args.mode == "train":
-        eval_subtitle = (
-            "No LoRA weight updates (--no-finetune). "
-            "Metrics = hold-out test eval; same init weights before/after."
-        )
-    else:
+    plot_path: Path | None
+    if compare_before_after:
+        policy_label = _adversary_training_label(args)
         eval_subtitle = (
             "Same fixed rewriter instruction and target system prompt. "
             f"before_training = adversary LoRA at init; after_training = same LoRA after {policy_label}. "
             "Bars = aggregate metrics on the held-out eval set (not per-step noise)."
         )
-    plot_path = save_baseline_optimized_plot(
-        comparison_df=comparison_df,
-        out_path=results_dir / "plot_eval_metrics_before_vs_after_training.png",
-        title="Adversary eval: before vs after training",
-        subtitle=eval_subtitle,
-    )
+        plot_path = save_baseline_optimized_plot(
+            comparison_df=comparison_df,
+            out_path=results_dir / "plot_eval_metrics_before_vs_after_training.png",
+            title="Adversary eval: before vs after training",
+            subtitle=eval_subtitle,
+        )
+    else:
+        plot_path = None
     train_iters = (
         train_cfg.iterations
         if args.mode == "train" and getattr(args, "finetune", True)
@@ -472,7 +507,19 @@ def save_artifacts(
         endpoints={"reflection_base_url": args.reflection_vllm_base_url},
         extra={
             "metrics_json_path": str(metrics_json_path),
-            "comparison_metrics_csv": "eval_metrics_before_vs_after_training.csv",
+            "prompts_json_path": str(prompts_json_path),
+            "eval_artifact_layout": (
+                "before_after_training" if compare_before_after else "single_test_eval"
+            ),
+            "comparison_metrics_csv": (
+                "eval_metrics_before_vs_after_training.csv" if compare_before_after else None
+            ),
+            "eval_metrics_csv": "eval_metrics.csv" if not compare_before_after else None,
+            "eval_outputs_csv": (
+                ["eval_outputs_before_training.csv", "eval_outputs_after_training.csv"]
+                if compare_before_after
+                else ["eval_outputs.csv"]
+            ),
             "training_csv_name": train_cfg.training_csv_name,
             "eval_csv_name": train_cfg.eval_csv_name,
             "save_dir": adapter_path,
@@ -482,16 +529,15 @@ def save_artifacts(
             "rs_budget": getattr(args, "rs_budget", 5),
             "rs_min_successes": getattr(args, "rs_min_successes", 0),
             "finetune": getattr(args, "finetune", True),
+            "prompts": prompts_payload,
         },
         config_snapshot=config_snapshot,
     )
     manifest_path = write_run_manifest(results_dir=results_dir, payload=manifest)
-    logged_paths = [
-        metrics_json_path,
-        manifest_path,
-        plot_path,
-        results_dir,
-    ]
+    logged_paths: list[Path] = [metrics_json_path, prompts_json_path, manifest_path]
+    if plot_path is not None:
+        logged_paths.append(plot_path)
+    logged_paths.append(results_dir)
     if asr_iter_path is not None:
         logged_paths.insert(-1, asr_iter_path)
     if refusal_iter_path is not None:
@@ -547,8 +593,9 @@ def parse_args(defaults: dict[str, Any]) -> argparse.Namespace:
         type=int,
         default=run_defaults.get("target_max_workers", 16),
         help=(
-            "Thread-pool size for target HTTP calls during eval; pipelines with adversary "
-            "(next adversary runs while earlier targets are in flight)."
+            "Thread-pool size for concurrent target HTTP calls. Used during eval and during "
+            "training rollouts (REINFORCE/RLOO batch): adversary stays sequential on this GPU "
+            "while earlier target requests stay in flight on vLLM."
         ),
     )
     parser.add_argument(
@@ -718,10 +765,16 @@ def main() -> None:
         seed=int(args.csv_seed),
     )
 
+    train_and_ft = args.mode == "train" and getattr(args, "finetune", True)
+    test_note = (
+        "CSV test (baseline + final) "
+        if train_and_ft
+        else "CSV test "
+    )
     print(
         f"Dataset: HF train n={len(train_prompts)} | "
         f"CSV val (periodic) n={len(val_eval_examples)} | "
-        f"CSV test (baseline + final) n={len(test_eval_examples)}"
+        f"{test_note}n={len(test_eval_examples)}"
     )
 
     baseline_eval, baseline_rows, baseline_metrics = _eval_suite(
@@ -733,7 +786,10 @@ def main() -> None:
         ctx,
         args,
     )
-    print("Baseline metrics:", baseline_metrics)
+    if train_and_ft:
+        print("Baseline metrics:", baseline_metrics)
+    else:
+        print("Test eval metrics:", baseline_metrics)
 
     training_rows: list[dict[str, Any]] = []
     final_eval = baseline_eval
@@ -790,29 +846,67 @@ def main() -> None:
                             break
             else:
                 batch_size = max(1, int(args.adversary_reinforce_batch_size))
-                for _ in range(batch_size):
-                    sampled, _ = adversary_output(
-                        prompt=prompt,
-                        attacker_instruction=args.attacker_instruction,
-                        adversary_session=ctx.adversary_session,
-                        device=ctx.device,
-                        max_new_tokens=train_cfg.max_new_tokens,
-                    )
-                    adversary_text = sampled["completion_text"].strip()
-                    target_response, _ = target_generate(
-                        prompt=adversary_text,
-                        target_session=ctx.target_session,
-                        device=ctx.device,
-                        target_system_prompt=args.target_system_prompt,
-                        max_new_tokens=train_cfg.target_max_new_tokens,
-                    )
-                    reward, verdict = reward_from_response(prompt, target_response, eval_cfg, ctx)
-                    batch_gen_ids.append(sampled["gen_ids"])
-                    batch_rewards.append(reward)
-                    batch_prompt_lens.append(sampled["prompt_len"])
-                    adv_texts.append(adversary_text)
-                    target_resps.append(target_response)
-                    verdicts.append(verdict)
+                train_target_pool = getattr(
+                    ctx.target_session.runtime, "supports_concurrent_target_inference", False
+                )
+                train_workers = cap_thread_workers(batch_size, args.target_max_workers)
+                if not train_target_pool:
+                    for _ in range(batch_size):
+                        sampled, _ = adversary_output(
+                            prompt=prompt,
+                            attacker_instruction=args.attacker_instruction,
+                            adversary_session=ctx.adversary_session,
+                            device=ctx.device,
+                            max_new_tokens=train_cfg.max_new_tokens,
+                        )
+                        adversary_text = sampled["completion_text"].strip()
+                        target_response, _ = target_generate(
+                            prompt=adversary_text,
+                            target_session=ctx.target_session,
+                            device=ctx.device,
+                            target_system_prompt=args.target_system_prompt,
+                            max_new_tokens=train_cfg.target_max_new_tokens,
+                        )
+                        reward, verdict = reward_from_response(prompt, target_response, eval_cfg, ctx)
+                        batch_gen_ids.append(sampled["gen_ids"])
+                        batch_rewards.append(reward)
+                        batch_prompt_lens.append(sampled["prompt_len"])
+                        adv_texts.append(adversary_text)
+                        target_resps.append(target_response)
+                        verdicts.append(verdict)
+                else:
+                    pending_rollouts: list[
+                        tuple[dict[str, Any], str, Future[tuple[str, float]]]
+                    ] = []
+                    with ThreadPoolExecutor(max_workers=train_workers) as executor:
+                        for _ in range(batch_size):
+                            sampled, _ = adversary_output(
+                                prompt=prompt,
+                                attacker_instruction=args.attacker_instruction,
+                                adversary_session=ctx.adversary_session,
+                                device=ctx.device,
+                                max_new_tokens=train_cfg.max_new_tokens,
+                            )
+                            adversary_text = sampled["completion_text"].strip()
+                            request = GenerationRequest(
+                                system_prompt=args.target_system_prompt,
+                                user_prompt=adversary_text,
+                                max_new_tokens=train_cfg.target_max_new_tokens,
+                                temperature=0.0,
+                            )
+                            fut = executor.submit(
+                                timed_target_generate, ctx.target_session, ctx.device, request
+                            )
+                            pending_rollouts.append((sampled, adversary_text, fut))
+                        for sampled, adversary_text, fut in pending_rollouts:
+                            target_response, _ = fut.result()
+                            reward, verdict = reward_from_response(prompt, target_response, eval_cfg, ctx)
+                            batch_gen_ids.append(sampled["gen_ids"])
+                            batch_rewards.append(reward)
+                            batch_prompt_lens.append(sampled["prompt_len"])
+                            adv_texts.append(adversary_text)
+                            target_resps.append(target_response)
+                            verdicts.append(verdict)
 
             tok = model.tokenizer
             pad_id = tok.pad_token_id

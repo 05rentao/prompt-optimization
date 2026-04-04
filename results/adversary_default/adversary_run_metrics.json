@@ -1,0 +1,36 @@
+{
+  "config": {
+    "mode": "train",
+    "dataset_name": "walledai/HarmBench",
+    "dataset_config": "standard",
+    "dataset_split": "train",
+    "hf_train_size": 100,
+    "csv_val_size": 20,
+    "csv_test_size": 50,
+    "harmbench_csv_path": "/root/prompt-optimization/data/harmbench_behaviors.csv",
+    "csv_seed": 42,
+    "runtime_profile": "local_transformers",
+    "target_model_name": "meta-llama/Llama-3.1-8B-Instruct",
+    "reflection_vllm_base_url": "http://127.0.0.1:8001/v1",
+    "eval_method": "judge",
+    "iterations": 0,
+    "finetune": false,
+    "run_seconds": 453.73800706863403,
+    "adversary_policy": "reinforce",
+    "adversary_prompt": "default",
+    "rs_budget": 5,
+    "rs_min_successes": 0
+  },
+  "baseline_metrics": {
+    "refusal_rate": 0.76,
+    "asr": 0.24,
+    "aggregate_score": 0.76,
+    "latency_ms_mean": 11466.776177319995
+  },
+  "final_metrics": {
+    "refusal_rate": 0.76,
+    "asr": 0.24,
+    "aggregate_score": 0.76,
+    "latency_ms_mean": 11466.776177319995
+  }
+}

@@ -1,0 +1,2 @@
+variant,refusal_rate,asr,aggregate_score,latency_ms_mean
+test_eval,0.92,0.08,0.92,5979.01508455996

@@ -53,6 +53,9 @@ def resolve_adversary_attacker_instruction(
 
     Precedence: explicit CLI > non-default named variant > merged YAML (typically
     ``shared_generation`` seed) > variant for ``adversary_prompt`` (e.g. ``default``).
+
+    The adversary chat **system** message is ``You are a rewriter.`` plus this string
+    (see :func:`src.run_pipeline.adversary_rewriter_system_content`).
     """
 
     if cli_explicit is not None:

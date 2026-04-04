@@ -14,6 +14,15 @@ from src.evaluators import compute_refusal_score, is_yes_verdict
 from src.runtime import EvaluationConfig, GenerationSession
 
 
+def adversary_rewriter_system_content(resolved_instruction: str) -> str:
+    """System message for the adversary chat template (must match :func:`adversary_rewrite_sample`).
+
+    ``resolved_instruction`` is the string from :func:`~src.runtime.adversary_prompts.resolve_adversary_attacker_instruction`
+    (CLI / named variant / YAML seed for ``default``).
+    """
+    return f"You are a rewriter. {resolved_instruction}"
+
+
 def adversary_rewrite_sample(
     adversary_session: GenerationSession,
     device: str,
@@ -27,7 +36,7 @@ def adversary_rewrite_sample(
 ) -> tuple[dict[str, Any], float]:
     """Sample one adversary rewrite with token-level metadata and elapsed milliseconds."""
     messages = [
-        {"role": "system", "content": f"You are a rewriter. {instruction}"},
+        {"role": "system", "content": adversary_rewriter_system_content(instruction)},
         {"role": "user", "content": user_prompt},
     ]
     start = time.perf_counter()

@@ -470,75 +470,88 @@ def save_adversary_v2_artifacts(
     config_snapshot: dict[str, Any],
 ) -> None:
     results_dir.mkdir(parents=True, exist_ok=True)
-    policy_label = _adversary_v2_training_label(args)
+    compare_before_after = getattr(args, "finetune", True)
 
-    metrics_payload: dict[str, Any] = {
-        "pipeline": "adversary_v2",
-        "config": {
-            "mode": args.mode,
-            "dataset_name": args.dataset_name,
-            "dataset_config": args.dataset_config,
-            "dataset_split": args.dataset_split,
-            "hf_train_size": args.hf_train_size,
-            "csv_val_size": args.csv_val_size,
-            "csv_test_size": args.csv_test_size,
-            "harmbench_csv_path": getattr(args, "harmbench_csv_resolved_path", None),
-            "csv_seed": args.csv_seed,
-            "runtime_profile": args.runtime_profile,
-            "target_model_name": args.task_model_name,
-            "reflection_vllm_base_url": args.reflection_vllm_base_url,
-            "eval_method": args.eval_method,
-            "iterations": (
-                train_cfg.iterations
-                if args.mode == "train" and getattr(args, "finetune", True)
-                else 0
-            ),
-            "finetune": getattr(args, "finetune", True),
-            "run_seconds": run_seconds,
-            "adversary_policy": getattr(args, "adversary_policy", "reinforce"),
-            "rs_budget": getattr(args, "rs_budget", 5),
-            "rs_min_successes": getattr(args, "rs_min_successes", 0),
-        },
-        "baseline_metrics": baseline_metrics,
-        "final_metrics": final_metrics,
+    config_block: dict[str, Any] = {
+        "mode": args.mode,
+        "dataset_name": args.dataset_name,
+        "dataset_config": args.dataset_config,
+        "dataset_split": args.dataset_split,
+        "hf_train_size": args.hf_train_size,
+        "csv_val_size": args.csv_val_size,
+        "csv_test_size": args.csv_test_size,
+        "harmbench_csv_path": getattr(args, "harmbench_csv_resolved_path", None),
+        "csv_seed": args.csv_seed,
+        "runtime_profile": args.runtime_profile,
+        "target_model_name": args.task_model_name,
+        "reflection_vllm_base_url": args.reflection_vllm_base_url,
+        "eval_method": args.eval_method,
+        "iterations": (
+            train_cfg.iterations
+            if args.mode == "train" and getattr(args, "finetune", True)
+            else 0
+        ),
+        "finetune": getattr(args, "finetune", True),
+        "run_seconds": run_seconds,
+        "adversary_policy": getattr(args, "adversary_policy", "reinforce"),
+        "rs_budget": getattr(args, "rs_budget", 5),
+        "rs_min_successes": getattr(args, "rs_min_successes", 0),
     }
+    if compare_before_after:
+        metrics_payload: dict[str, Any] = {
+            "pipeline": "adversary_v2",
+            "config": config_block,
+            "eval_kind": "before_after_training",
+            "baseline_metrics": baseline_metrics,
+            "final_metrics": final_metrics,
+        }
+    else:
+        metrics_payload = {
+            "pipeline": "adversary_v2",
+            "config": config_block,
+            "eval_kind": "single_test_eval",
+            "test_eval_metrics": baseline_metrics,
+        }
     metrics_json_path = results_dir / "adversary_v2_run_metrics.json"
     write_json(metrics_json_path, metrics_payload)
 
-    comparison_df = build_baseline_optimized_df(
-        baseline_metrics=baseline_metrics,
-        optimized_metrics=final_metrics,
-        baseline_variant="before_training",
-        comparison_variant="after_training",
-    )
+    csv_files: dict[str, pd.DataFrame] = {}
+    if compare_before_after:
+        comparison_df = build_baseline_optimized_df(
+            baseline_metrics=baseline_metrics,
+            optimized_metrics=final_metrics,
+            baseline_variant="before_training",
+            comparison_variant="after_training",
+        )
+        csv_files["eval_metrics_before_vs_after_training.csv"] = comparison_df
+        csv_files["eval_outputs_before_training.csv"] = baseline_df
+        csv_files["eval_outputs_after_training.csv"] = final_df
+    else:
+        csv_files["eval_metrics.csv"] = pd.DataFrame([{"variant": "test_eval", **baseline_metrics}])
+        csv_files["eval_outputs.csv"] = baseline_df
+    csv_files[train_cfg.training_csv_name] = training_df
     write_many_csv(
         results_dir,
-        {
-            "eval_metrics_before_vs_after_training.csv": comparison_df,
-            "eval_outputs_before_training.csv": baseline_df,
-            "eval_outputs_after_training.csv": final_df,
-            train_cfg.training_csv_name: training_df,
-        },
+        csv_files,
         skip_empty={train_cfg.training_csv_name},
     )
 
-    if not getattr(args, "finetune", True) and args.mode == "train":
-        eval_subtitle = (
-            "No LoRA weight updates (--no-finetune). "
-            "Metrics = hold-out test eval; same init weights before/after."
-        )
-    else:
+    plot_path: Path | None
+    if compare_before_after:
+        policy_label = _adversary_v2_training_label(args)
         eval_subtitle = (
             "Adversary v2 decomposition pipeline. "
             f"before_training = adversary LoRA at init; after_training = same LoRA after {policy_label}. "
             "Bars = aggregate metrics on the held-out eval set."
         )
-    plot_path = save_baseline_optimized_plot(
-        comparison_df=comparison_df,
-        out_path=results_dir / "plot_eval_metrics_before_vs_after_training.png",
-        title="Adversary v2 eval: before vs after training",
-        subtitle=eval_subtitle,
-    )
+        plot_path = save_baseline_optimized_plot(
+            comparison_df=comparison_df,
+            out_path=results_dir / "plot_eval_metrics_before_vs_after_training.png",
+            title="Adversary v2 eval: before vs after training",
+            subtitle=eval_subtitle,
+        )
+    else:
+        plot_path = None
     train_iters = (
         train_cfg.iterations
         if args.mode == "train" and getattr(args, "finetune", True)
@@ -593,7 +606,18 @@ def save_adversary_v2_artifacts(
         extra={
             "pipeline": "adversary_v2",
             "metrics_json_path": str(metrics_json_path),
-            "comparison_metrics_csv": "eval_metrics_before_vs_after_training.csv",
+            "eval_artifact_layout": (
+                "before_after_training" if compare_before_after else "single_test_eval"
+            ),
+            "comparison_metrics_csv": (
+                "eval_metrics_before_vs_after_training.csv" if compare_before_after else None
+            ),
+            "eval_metrics_csv": "eval_metrics.csv" if not compare_before_after else None,
+            "eval_outputs_csv": (
+                ["eval_outputs_before_training.csv", "eval_outputs_after_training.csv"]
+                if compare_before_after
+                else ["eval_outputs.csv"]
+            ),
             "training_csv_name": train_cfg.training_csv_name,
             "eval_csv_name": train_cfg.eval_csv_name,
             "save_dir": adapter_path,
@@ -606,12 +630,10 @@ def save_adversary_v2_artifacts(
         config_snapshot=config_snapshot,
     )
     manifest_path = write_run_manifest(results_dir=results_dir, payload=manifest)
-    logged_paths = [
-        metrics_json_path,
-        manifest_path,
-        plot_path,
-        results_dir,
-    ]
+    logged_paths: list[Path] = [metrics_json_path, manifest_path]
+    if plot_path is not None:
+        logged_paths.append(plot_path)
+    logged_paths.append(results_dir)
     if asr_iter_path is not None:
         logged_paths.insert(-1, asr_iter_path)
     if refusal_iter_path is not None:
@@ -842,7 +864,10 @@ def main() -> None:
     baseline_eval, baseline_rows, baseline_metrics = _decomposed_eval_suite(
         test_eval_examples, args, train_cfg, eval_cfg, ctx, adversary_system
     )
-    print("Baseline test metrics:", baseline_metrics)
+    if args.finetune:
+        print("Baseline test metrics:", baseline_metrics)
+    else:
+        print("Test eval metrics:", baseline_metrics)
 
     training_rows: list[dict[str, Any]] = []
     final_eval = baseline_eval

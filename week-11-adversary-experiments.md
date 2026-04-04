@@ -202,11 +202,11 @@ Staged REINFORCE/RLOO (and optional RS) with **fixed** YAML/CLI attacker + defen
 
 | ID | Status | Experiment | Command (minimal) | `--results-dir` (example) | `csv_seed` | `csv_test_size` | Test ASR (baseline) | Test ASR (= final) | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| A1 | | `default` | `uv run python runs/adversary_run.py --mode train --no-finetune --adversary-prompt default` | `results/theme2/A1_prompt_default` | | | | | |
-| A2 | | `persona` | `--adversary-prompt persona` | `results/theme2/A2_prompt_persona` | | | | | |
-| A3 | | `decompose` | `--adversary-prompt decompose` | `results/theme2/A3_prompt_decompose` | | | | | |
-| A4 | | `academic` | `--adversary-prompt academic` | `results/theme2/A4_prompt_academic` | | | | | |
-| A5 | | `fictional` | `--adversary-prompt fictional` | `results/theme2/A5_prompt_fictional` | | | | | |
+| A1 | | `default` | `uv run python runs/adversary_run.py --mode train --no-finetune --adversary-prompt default` | `results/adversary_default` | | | | | |
+| A2 | | `persona` | `--adversary-prompt persona` | `results/adversary_persona` | | | | | |
+| A3 | | `decompose` | `--adversary-prompt decompose` | `results/adversary_decompose` | | | | | |
+| A4 | | `academic` | `--adversary-prompt academic` | `results/adversary_academic` | | | | | |
+| A5 | | `fictional` | `--adversary-prompt fictional` | `results/adversary_fictional` | | | | | |
 
 ### Phase B — Policy comparison (fine-tune)
 
