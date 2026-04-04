@@ -1,0 +1,23 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.ipynb_checkpoints/
+
+# Environment files
+.env
+.venv/
+venv/
+
+# Experiment outputs
+outputs/*.json
+outputs/*.jsonl
+outputs/*.csv
+outputs/*.png
+outputs/*.pt
+outputs/*.bin
+
+# OS/editor
+.DS_Store
+Thumbs.db
