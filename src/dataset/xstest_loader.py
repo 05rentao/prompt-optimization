@@ -21,8 +21,8 @@ def normalize_xstest_record(record: dict[str, Any], idx: int) -> XSTestExampleRo
     return {
         "id": str(record.get("id", idx)),
         "prompt": str(record.get("prompt") or record.get("text", "")).strip(),
-        "is_safe": bool(record.get("label") == 0),  # label 0 = safe, 1 = unsafe
-        "category": str(record.get("category", "unknown")),
+        "is_safe": str(record.get("label", "")).lower() == "safe",
+        "category": str(record.get("type") or record.get("focus") or "unknown"),
     }
 
 
