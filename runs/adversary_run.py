@@ -7,7 +7,7 @@ or rejection-sampling policy-gradient updates from target responses judged by
 either HarmBench judge verdicts or the shared heuristic evaluator.
 
 Use this entrypoint for Theme 2 sweeps (prompt modes, policy, iterations); see
-``notes/theme2-adversary-experiments.md``. For a minimal fixed-prompt baseline,
+``week-11-adversary-experiments.md``. For a minimal fixed-prompt baseline,
 see ``runs/coev_v2_run.py``. Use ``--no-finetune`` (train mode) to sweep rewriter
 prompts without LoRA updates. Dataset sizing: ``hf_train_size`` (HF train pool),
 ``csv_val_size`` / ``csv_test_size`` + ``harmbench_csv_path`` (periodic val vs

@@ -5,7 +5,7 @@ Trains adversary LoRA with REINFORCE, RLOO, or rejection sampling. Attacker inst
 and target system prompt are fixed for the whole run (from YAML / CLI). There is no
 prompt evolution here; use ``runs/adversary_run.py`` for richer experiments and knobs.
 
-See ``notes/theme2-adversary-experiments.md`` for the current experimental plan (Theme 2)
+See ``week-11-adversary-experiments.md`` for the current experimental plan (Theme 2)
 and how this script relates to ``adversary_run.py``.
 """
 
