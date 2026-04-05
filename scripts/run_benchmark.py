@@ -230,6 +230,11 @@ def parse_args() -> argparse.Namespace:
         default=42,
         help="Random seed",
     )
+    parser.add_argument(
+        "--system-prompt",
+        default=None,
+        help="System prompt to evaluate (overrides config)",
+    )
     return parser.parse_args()
 
 
@@ -240,6 +245,8 @@ def main() -> None:
     device = args.device
     hf_token = resolve_hf_token()
     sys_prompt, bench_max_tokens, bench_temp = _benchmark_target_sampling(defaults)
+    if args.system_prompt:
+        sys_prompt = args.system_prompt
 
     # Set up output directory
     if args.output_dir:
