@@ -9,7 +9,7 @@ from typing import Any, ClassVar, Iterable
 
 import torch
 import torch.nn.functional as f
-from peft import LoraConfig, TaskType, get_peft_model
+from peft import LoraConfig, PeftModel, TaskType, get_peft_model
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 from .contracts import (
@@ -188,15 +188,26 @@ class UnslothAdversaryRuntime(LoRABridge):
         )
         base_model.config.use_cache = False
 
-        lora_config = LoraConfig(
-            r=cfg.lora_r,
-            lora_alpha=cfg.lora_alpha,
-            target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-            lora_dropout=cfg.lora_dropout,
-            bias="none",
-            task_type=TaskType.CAUSAL_LM,
-        )
-        self.model = get_peft_model(base_model, lora_config)
+        if cfg.adapter_load_path:
+            load_dir = Path(cfg.adapter_load_path).expanduser().resolve()
+            if not load_dir.is_dir():
+                raise FileNotFoundError(f"adapter load path is not a directory: {load_dir}")
+            self.model = PeftModel.from_pretrained(
+                base_model,
+                str(load_dir),
+                is_trainable=cfg.adapter_trainable,
+            )
+            print(f"Loaded adversary adapters from: {load_dir}", flush=True)
+        else:
+            lora_config = LoraConfig(
+                r=cfg.lora_r,
+                lora_alpha=cfg.lora_alpha,
+                target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+                lora_dropout=cfg.lora_dropout,
+                bias="none",
+                task_type=TaskType.CAUSAL_LM,
+            )
+            self.model = get_peft_model(base_model, lora_config)
         self.model.eval()
         self.tokenizer = AutoTokenizer.from_pretrained(cfg.model_id)
         if self.tokenizer.pad_token is None:

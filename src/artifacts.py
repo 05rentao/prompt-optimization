@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -15,6 +17,59 @@ def ensure_dir(path: Path) -> Path:
     """Ensure directory exists and return the path."""
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def format_duration_human(seconds: float) -> str:
+    """Compact wall-clock label for metrics JSON, e.g. ``45s``, ``12m 30s``, ``1h 5m 2s``."""
+
+    total = int(round(max(0.0, float(seconds))))
+    h, rem = divmod(total, 3600)
+    m, s = divmod(rem, 60)
+    parts: list[str] = []
+    if h:
+        parts.append(f"{h}h")
+    if m:
+        parts.append(f"{m}m")
+    if s or not parts:
+        parts.append(f"{s}s")
+    return " ".join(parts)
+
+
+def record_run_timing(
+    repo_root: Path,
+    results_dir: Path,
+    *,
+    script: str,
+    run_start: float,
+    run_seconds: float,
+    extra: dict[str, Any] | None = None,
+    include_argv: bool = True,
+) -> tuple[Path, Path]:
+    """Persist wall-clock timing for a run: per-directory JSON + append-only repo log.
+
+    Writes ``results_dir/run_timing.json`` and appends one JSON object per line to
+    ``<repo>/results/experiment_timing_log.jsonl`` so you can grep historical run
+    durations without opening each result folder.
+    """
+    ended = datetime.now(timezone.utc)
+    started = datetime.fromtimestamp(run_start, tz=timezone.utc)
+    payload: dict[str, Any] = {
+        "script": script,
+        "wall_seconds": round(float(run_seconds), 3),
+        "started_at_utc": started.isoformat(),
+        "ended_at_utc": ended.isoformat(),
+        "results_dir": str(results_dir.resolve()),
+    }
+    if extra:
+        payload["extra"] = extra
+    if include_argv:
+        payload["argv"] = sys.argv[:128]
+    timing_path = write_json(results_dir / "run_timing.json", payload)
+    log_path = repo_root / "results" / "experiment_timing_log.jsonl"
+    ensure_dir(log_path.parent)
+    with log_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, default=str) + "\n")
+    return timing_path, log_path
 
 
 def write_json(path: Path, payload: Any) -> Path:

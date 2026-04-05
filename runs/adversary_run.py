@@ -35,7 +35,9 @@ import torch
 
 from src.artifacts import (
     build_baseline_optimized_df,
+    format_duration_human,
     log_saved_artifacts,
+    record_run_timing,
     save_adversary_asr_vs_iterations_plot,
     save_adversary_refusal_vs_iterations_plot,
     save_baseline_optimized_plot,
@@ -388,6 +390,7 @@ def save_artifacts(
         "adversary_prompt": getattr(args, "adversary_prompt", "default"),
         "rs_budget": getattr(args, "rs_budget", 5),
         "rs_min_successes": getattr(args, "rs_min_successes", 0),
+        "load_adapters": getattr(args, "load_adapters_resolved", None),
     }
     prompts_payload = {
         "adversary_prompt_variant": getattr(args, "adversary_prompt", "default"),
@@ -397,10 +400,15 @@ def save_artifacts(
         ),
         "target_system_prompt": args.target_system_prompt,
     }
+    experiment_timing = {
+        "wall_seconds": round(float(run_seconds), 3),
+        "wall_duration_human": format_duration_human(run_seconds),
+    }
     if compare_before_after:
         metrics_payload: dict[str, Any] = {
             "config": config_block,
             "eval_kind": "before_after_training",
+            "experiment_timing": experiment_timing,
             "prompts": prompts_payload,
             "baseline_metrics": baseline_metrics,
             "final_metrics": final_metrics,
@@ -409,6 +417,7 @@ def save_artifacts(
         metrics_payload = {
             "config": config_block,
             "eval_kind": "single_test_eval",
+            "experiment_timing": experiment_timing,
             "prompts": prompts_payload,
             "test_eval_metrics": baseline_metrics,
         }
@@ -529,6 +538,7 @@ def save_artifacts(
             "rs_budget": getattr(args, "rs_budget", 5),
             "rs_min_successes": getattr(args, "rs_min_successes", 0),
             "finetune": getattr(args, "finetune", True),
+            "load_adapters": getattr(args, "load_adapters_resolved", None),
             "prompts": prompts_payload,
         },
         config_snapshot=config_snapshot,
@@ -601,7 +611,7 @@ def parse_args(defaults: dict[str, Any]) -> argparse.Namespace:
     parser.add_argument(
         "--eval-method",
         choices=["judge", "heuristic"],
-        default=run_defaults.get("eval_method", "judge"),
+        default=run_defaults.get("eval_method") or "judge",
     )
     parser.add_argument(
         "--refusal-threshold",
@@ -660,6 +670,15 @@ def parse_args(defaults: dict[str, Any]) -> argparse.Namespace:
             "Runs test-set eval once (baseline = final at init weights) for prompt comparison; omit for normal fine-tuning."
         ),
     )
+    parser.add_argument(
+        "--load-adapters",
+        type=str,
+        default=None,
+        help=(
+            "Optional directory of PEFT adapters from a prior run (same base adversary_model_id). "
+            "Loads weights before train/eval; omit for fresh LoRA init."
+        ),
+    )
     args = parser.parse_args()
     if args.rs_min_successes > 0 and args.adversary_policy == "rloo":
         parser.error(
@@ -668,7 +687,23 @@ def parse_args(defaults: dict[str, Any]) -> argparse.Namespace:
     return args
 
 
+def _resolved_load_adapters_path(args: argparse.Namespace) -> str | None:
+    raw = getattr(args, "load_adapters", None)
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if not s:
+        return None
+    p = Path(s).expanduser().resolve()
+    if not p.is_dir():
+        raise FileNotFoundError(f"--load-adapters is not an existing directory: {p}")
+    return str(p)
+
+
 def _build_context(args: argparse.Namespace, defaults: dict[str, Any], device: str) -> RunContext:
+    load_path = _resolved_load_adapters_path(args)
+    args.load_adapters_resolved = load_path
+    will_train = args.mode == "train" and getattr(args, "finetune", True)
     model_cfg = ModelConfig(model_id=args.adversary_model_id)
     adversary_cfg = UnslothAdversaryConfig(
         model_id=model_cfg.model_id,
@@ -677,6 +712,8 @@ def _build_context(args: argparse.Namespace, defaults: dict[str, Any], device: s
         lora_r=model_cfg.lora_r,
         lora_alpha=model_cfg.lora_alpha,
         lora_dropout=model_cfg.lora_dropout,
+        adapter_load_path=load_path,
+        adapter_trainable=will_train if load_path else True,
     )
     return RunContext(
         adversary_session=RuntimeCatalog.build_adversary_session(adversary_cfg),
@@ -1029,6 +1066,24 @@ def main() -> None:
         run_seconds=run_seconds,
         adapter_path=adapter_path,
         config_snapshot=build_config_snapshot(defaults, cli_args=args),
+    )
+    _, timing_log = record_run_timing(
+        _REPO_ROOT,
+        results_dir,
+        script="runs/adversary_run.py",
+        run_start=run_start,
+        run_seconds=run_seconds,
+        extra={
+            "mode": args.mode,
+            "finetune": getattr(args, "finetune", True),
+            "adversary_prompt": getattr(args, "adversary_prompt", "default"),
+            "eval_method": args.eval_method,
+        },
+    )
+    print(
+        f"[adversary_run] done in {run_seconds:.1f} s | "
+        f"run_timing.json → {results_dir / 'run_timing.json'} | append log → {timing_log}",
+        flush=True,
     )
 
 

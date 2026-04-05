@@ -76,6 +76,10 @@ class UnslothAdversaryConfig:
     lora_r: int = 16
     lora_alpha: int = 16
     lora_dropout: float = 0.0
+    #: Directory from a prior ``save_pretrained`` (PEFT) run; if set, load instead of fresh LoRA.
+    adapter_load_path: str | None = None
+    #: Only used when ``adapter_load_path`` is set; should match whether the run will train LoRA.
+    adapter_trainable: bool = True
 
 
 @dataclass

@@ -35,7 +35,9 @@ if str(_REPO_ROOT) not in sys.path:
 
 from src.artifacts import (
     build_baseline_optimized_df,
+    format_duration_human,
     log_saved_artifacts,
+    record_run_timing,
     save_adversary_asr_vs_iterations_plot,
     save_adversary_refusal_vs_iterations_plot,
     save_baseline_optimized_plot,
@@ -590,12 +592,18 @@ def save_adversary_v2_artifacts(
         "adversary_policy": getattr(args, "adversary_policy", "reinforce"),
         "rs_budget": getattr(args, "rs_budget", 5),
         "rs_min_successes": getattr(args, "rs_min_successes", 0),
+        "load_adapters": getattr(args, "load_adapters_resolved", None),
+    }
+    experiment_timing = {
+        "wall_seconds": round(float(run_seconds), 3),
+        "wall_duration_human": format_duration_human(run_seconds),
     }
     if compare_before_after:
         metrics_payload: dict[str, Any] = {
             "pipeline": "adversary_v2",
             "config": config_block,
             "eval_kind": "before_after_training",
+            "experiment_timing": experiment_timing,
             "baseline_metrics": baseline_metrics,
             "final_metrics": final_metrics,
         }
@@ -604,6 +612,7 @@ def save_adversary_v2_artifacts(
             "pipeline": "adversary_v2",
             "config": config_block,
             "eval_kind": "single_test_eval",
+            "experiment_timing": experiment_timing,
             "test_eval_metrics": baseline_metrics,
         }
     metrics_json_path = results_dir / "adversary_v2_run_metrics.json"
@@ -720,6 +729,7 @@ def save_adversary_v2_artifacts(
             "rs_budget": getattr(args, "rs_budget", 5),
             "rs_min_successes": getattr(args, "rs_min_successes", 0),
             "finetune": getattr(args, "finetune", True),
+            "load_adapters": getattr(args, "load_adapters_resolved", None),
         },
         config_snapshot=config_snapshot,
     )
@@ -757,7 +767,11 @@ def parse_args(defaults: dict[str, Any]) -> argparse.Namespace:
     parser.add_argument("--csv-seed", type=int, default=run_defaults.get("csv_seed", global_defaults["seed"]))
     parser.add_argument("--seed", type=int, default=global_defaults["seed"])
     parser.add_argument("--results-dir", default=run_defaults.get("results_dir", "results/adversary_v2"))
-    parser.add_argument("--eval-method", choices=["judge", "heuristic"], default=run_defaults.get("eval_method", "judge"))
+    parser.add_argument(
+        "--eval-method",
+        choices=["judge", "heuristic"],
+        default=run_defaults.get("eval_method") or "judge",
+    )
     parser.add_argument("--refusal-threshold", type=float, default=run_defaults.get("refusal_threshold", 0.7))
     parser.add_argument("--asr-threshold", type=float, default=run_defaults.get("asr_threshold", 0.3))
     parser.add_argument("--target-system-prompt", default=run_defaults["target_system_prompt"])
@@ -784,6 +798,15 @@ def parse_args(defaults: dict[str, Any]) -> argparse.Namespace:
         help="Train mode only: skip LoRA updates; test-set eval only at init weights.",
     )
     parser.add_argument(
+        "--load-adapters",
+        type=str,
+        default=None,
+        help=(
+            "Optional directory of PEFT adapters from a prior run (same base adversary_model_id). "
+            "Loads weights before train/eval; omit for fresh LoRA init."
+        ),
+    )
+    parser.add_argument(
         "--adversary-policy",
         choices=["reinforce", "rloo"],
         default=run_defaults.get("adversary_policy", "reinforce"),
@@ -801,7 +824,23 @@ def parse_args(defaults: dict[str, Any]) -> argparse.Namespace:
     return args
 
 
+def _resolved_load_adapters_path(args: argparse.Namespace) -> str | None:
+    raw = getattr(args, "load_adapters", None)
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if not s:
+        return None
+    p = Path(s).expanduser().resolve()
+    if not p.is_dir():
+        raise FileNotFoundError(f"--load-adapters is not an existing directory: {p}")
+    return str(p)
+
+
 def _build_context(args: argparse.Namespace, defaults: dict[str, Any], device: str) -> RunContext:
+    load_path = _resolved_load_adapters_path(args)
+    args.load_adapters_resolved = load_path
+    will_train = args.mode == "train" and getattr(args, "finetune", True)
     model_cfg = ModelConfig(model_id=args.adversary_model_id)
     adversary_cfg = UnslothAdversaryConfig(
         model_id=model_cfg.model_id,
@@ -810,6 +849,8 @@ def _build_context(args: argparse.Namespace, defaults: dict[str, Any], device: s
         lora_r=model_cfg.lora_r,
         lora_alpha=model_cfg.lora_alpha,
         lora_dropout=model_cfg.lora_dropout,
+        adapter_load_path=load_path,
+        adapter_trainable=will_train if load_path else True,
     )
     return RunContext(
         adversary_session=RuntimeCatalog.build_adversary_session(adversary_cfg),
@@ -911,6 +952,7 @@ def main() -> None:
         metrics = _evaluation_result_to_metrics(ev, lat_mean)
         results_dir.mkdir(parents=True, exist_ok=True)
         write_csv(results_dir / "adversary_v2_outputs.csv", df)
+        eval_run_s = time.time() - run_start
         write_json(
             results_dir / "adversary_v2_metrics.json",
             {
@@ -929,13 +971,33 @@ def main() -> None:
                     "eval_method": args.eval_method,
                     "pipeline": "adversary_v2",
                 },
-                "run_seconds": time.time() - run_start,
+                "run_seconds": eval_run_s,
+                "experiment_timing": {
+                    "wall_seconds": round(float(eval_run_s), 3),
+                    "wall_duration_human": format_duration_human(eval_run_s),
+                },
                 "config_snapshot": build_config_snapshot(defaults, cli_args=args),
+            },
+        )
+        _, timing_log = record_run_timing(
+            _REPO_ROOT,
+            results_dir,
+            script="runs/adversary_v2.py",
+            run_start=run_start,
+            run_seconds=eval_run_s,
+            extra={
+                "mode": "eval",
+                "eval_method": args.eval_method,
+                "csv_test_size": args.csv_test_size,
             },
         )
         print(f"[adversary_v2] metrics: {metrics}", flush=True)
         print(f"[adversary_v2] wrote: {results_dir / 'adversary_v2_outputs.csv'}", flush=True)
-        print(f"[adversary_v2] done in {time.time() - run_start:.1f} s", flush=True)
+        print(
+            f"[adversary_v2] done in {eval_run_s:.1f} s | "
+            f"run_timing.json → {results_dir / 'run_timing.json'} | append log → {timing_log}",
+            flush=True,
+        )
         return
 
     # --- mode train ---
@@ -1165,8 +1227,25 @@ def main() -> None:
         adapter_path=adapter_path,
         config_snapshot=build_config_snapshot(defaults, cli_args=args),
     )
+    _, timing_log = record_run_timing(
+        _REPO_ROOT,
+        results_dir,
+        script="runs/adversary_v2.py",
+        run_start=run_start,
+        run_seconds=run_seconds,
+        extra={
+            "mode": "train",
+            "finetune": getattr(args, "finetune", True),
+            "adversary_policy": getattr(args, "adversary_policy", "reinforce"),
+            "eval_method": args.eval_method,
+        },
+    )
     print(f"[adversary_v2] artifacts under {results_dir}", flush=True)
-    print(f"[adversary_v2] done in {run_seconds:.1f} s", flush=True)
+    print(
+        f"[adversary_v2] done in {run_seconds:.1f} s | "
+        f"run_timing.json → {results_dir / 'run_timing.json'} | append log → {timing_log}",
+        flush=True,
+    )
 
 
 if __name__ == "__main__":
