@@ -232,7 +232,12 @@ def save_adversary_asr_vs_iterations_plot(
     final_asr: float | None = None,
     iterations: int | None = None,
 ) -> Path | None:
-    """Plot periodic eval ASR vs training iteration from adversary_training_log (sparse eval_asr)."""
+    """Plot ASR vs training iteration from the adversary training log CSV.
+
+    Uses sparse ``eval_asr`` (filled when ``eval_every`` triggers): **CSV val** split, full
+    adversary→target→judge pass. Optional ``final_asr`` marks **CSV test** split ASR after
+    training (not the HF train pool).
+    """
     if training_df.empty:
         return None
     if "eval_asr" not in training_df.columns or "iteration" not in training_df.columns:
@@ -245,7 +250,7 @@ def save_adversary_asr_vs_iterations_plot(
 
     plt.figure(figsize=(10, 5))
     if not pts.empty:
-        sns.lineplot(data=pts, x="iteration", y="eval_asr_num", marker="o", label="periodic eval")
+        sns.lineplot(data=pts, x="iteration", y="eval_asr_num", marker="o", label="periodic val ASR")
     if final_asr is not None and iterations is not None and iterations > 0:
         plt.scatter(
             [iterations],
@@ -253,12 +258,48 @@ def save_adversary_asr_vs_iterations_plot(
             color="tab:red",
             s=80,
             zorder=5,
-            label="final eval",
+            label="final test ASR",
         )
     plt.ylim(0, 1)
     plt.title(title)
     plt.xlabel("Training iteration")
     plt.ylabel("ASR")
+    plt.legend(loc="best")
+    plt.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_path, dpi=180)
+    plt.close()
+    return out_path
+
+
+def save_adversary_train_batch_asr_vs_iterations_plot(
+    training_df: pd.DataFrame,
+    out_path: Path,
+    title: str,
+) -> Path | None:
+    """Plot mean training reward per iteration (dense): batch attack success rate for that step.
+
+    Each row's ``reward`` is the mean of binary rollout rewards for one training step (one random
+    HF train behavior per iteration, ``adversary_reinforce_batch_size`` or rejection-sampling
+    rollouts). This is **not** a full pass over the HF training set; it is cheap and already
+    computed for the policy-gradient step.
+    """
+    if training_df.empty:
+        return None
+    if "reward" not in training_df.columns or "iteration" not in training_df.columns:
+        return None
+    frame = training_df.copy()
+    frame["reward_num"] = pd.to_numeric(frame["reward"], errors="coerce")
+    frame = frame.dropna(subset=["reward_num"])
+    if frame.empty:
+        return None
+
+    plt.figure(figsize=(10, 5))
+    sns.lineplot(data=frame, x="iteration", y="reward_num", marker=".", label="train batch ASR (mean reward)")
+    plt.ylim(0, 1)
+    plt.title(title)
+    plt.xlabel("Training iteration")
+    plt.ylabel("Mean reward (batch ASR)")
     plt.legend(loc="best")
     plt.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -387,7 +428,7 @@ def save_adversary_refusal_vs_iterations_plot(
     if not pts.empty:
         pts = pts.copy()
         pts["eval_refusal_num"] = 1.0 - pts["eval_asr_num"]
-        sns.lineplot(data=pts, x="iteration", y="eval_refusal_num", marker="o", label="periodic eval")
+        sns.lineplot(data=pts, x="iteration", y="eval_refusal_num", marker="o", label="periodic val")
     if final_refusal is not None and iterations is not None and iterations > 0:
         plt.scatter(
             [iterations],
@@ -395,7 +436,7 @@ def save_adversary_refusal_vs_iterations_plot(
             color="tab:red",
             s=80,
             zorder=5,
-            label="final eval",
+            label="final test",
         )
     plt.ylim(0, 1)
     plt.title(title)

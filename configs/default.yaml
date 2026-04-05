@@ -102,11 +102,13 @@ runs:
     csv_seed: 42
     results_dir: "results/adversary"
     target_max_workers: 64
-    iterations: 15
-    lr: 0.00005
+    iterations: 30
+    lr: 0.00001
     weight_decay: 0.01
-    eval_every: 2
-    adversary_reinforce_batch_size: 4
+    eval_every: 30
+    adversary_reinforce_batch_size: 10
+    training_csv_name: "adversary_training_log.csv"
+    training_rollouts_csv_name: "adversary_training_rollouts_full.csv"
   # runs/adversary_v2.py: decomposed sub-questions; eval (--mode eval) or train + optional LoRA.
   adversary_v2:
     results_dir: "results/adversary_v2"
@@ -128,6 +130,7 @@ runs:
     max_subquestions: 12
     target_sub_workers: 16
     training_csv_name: "adversary_v2_training_log.csv"
+    training_rollouts_csv_name: "adversary_v2_training_rollouts_full.csv"
     eval_csv_name: "adversary_v2_eval_outputs.csv"
   vector_steering_baseline:
     # Only this run loads target weights locally (activation steering); all other runs use vLLM for target.

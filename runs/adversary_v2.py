@@ -44,6 +44,7 @@ from src.artifacts import (
     record_run_timing,
     save_adversary_asr_vs_iterations_plot,
     save_adversary_refusal_vs_iterations_plot,
+    save_adversary_train_batch_asr_vs_iterations_plot,
     save_baseline_optimized_plot,
     write_csv,
     write_json,
@@ -155,6 +156,7 @@ class AdversaryTrainingConfig:
     max_new_tokens: int = 512
     target_max_new_tokens: int = 256
     training_csv_name: str = "adversary_v2_training_log.csv"
+    training_rollouts_csv_name: str = "adversary_v2_training_rollouts_full.csv"
     eval_csv_name: str = "adversary_v2_eval_outputs.csv"
 
 
@@ -606,6 +608,7 @@ def save_adversary_v2_artifacts(
     baseline_df: pd.DataFrame,
     final_df: pd.DataFrame,
     training_df: pd.DataFrame,
+    rollout_df: pd.DataFrame,
     run_seconds: float,
     adapter_path: str | None,
     config_snapshot: dict[str, Any],
@@ -678,10 +681,11 @@ def save_adversary_v2_artifacts(
         csv_files["eval_metrics.csv"] = pd.DataFrame([{"variant": "test_eval", **baseline_metrics}])
         csv_files["eval_outputs.csv"] = baseline_df
     csv_files[train_cfg.training_csv_name] = training_df
+    csv_files[train_cfg.training_rollouts_csv_name] = rollout_df
     write_many_csv(
         results_dir,
         csv_files,
-        skip_empty={train_cfg.training_csv_name},
+        skip_empty={train_cfg.training_csv_name, train_cfg.training_rollouts_csv_name},
     )
 
     plot_path: Path | None
@@ -705,21 +709,26 @@ def save_adversary_v2_artifacts(
         if args.mode == "train" and getattr(args, "finetune", True)
         else None
     )
-    final_asr_train = final_metrics.get("asr") if args.mode == "train" else None
-    final_refusal_train = (1.0 - float(final_asr_train)) if final_asr_train is not None else None
+    final_asr_test = final_metrics.get("asr") if args.mode == "train" else None
+    final_refusal_test = (1.0 - float(final_asr_test)) if final_asr_test is not None else None
     asr_iter_path = save_adversary_asr_vs_iterations_plot(
         training_df=training_df,
         out_path=results_dir / "plot_asr_vs_iterations.png",
-        title="Adversary v2 ASR vs training iteration",
-        final_asr=final_asr_train,
+        title="Adversary v2 ASR vs training iteration (val line, test final point)",
+        final_asr=final_asr_test,
         iterations=train_iters,
     )
     refusal_iter_path = save_adversary_refusal_vs_iterations_plot(
         training_df=training_df,
         out_path=results_dir / "plot_refusal_vs_iterations.png",
-        title="Adversary v2 refusal rate vs training iteration",
-        final_refusal=final_refusal_train,
+        title="Adversary v2 refusal vs training iteration (val line, test final point)",
+        final_refusal=final_refusal_test,
         iterations=train_iters,
+    )
+    train_batch_asr_path = save_adversary_train_batch_asr_vs_iterations_plot(
+        training_df=training_df,
+        out_path=results_dir / "plot_train_batch_asr_vs_iterations.png",
+        title="Adversary v2 train batch ASR (mean reward per iteration)",
     )
 
     manifest = RunManifest(
@@ -767,6 +776,7 @@ def save_adversary_v2_artifacts(
                 else ["eval_outputs.csv"]
             ),
             "training_csv_name": train_cfg.training_csv_name,
+            "training_rollouts_csv": train_cfg.training_rollouts_csv_name,
             "eval_csv_name": train_cfg.eval_csv_name,
             "save_dir": adapter_path,
             "eval_method": args.eval_method,
@@ -787,6 +797,8 @@ def save_adversary_v2_artifacts(
         logged_paths.insert(-1, asr_iter_path)
     if refusal_iter_path is not None:
         logged_paths.insert(-1, refusal_iter_path)
+    if train_batch_asr_path is not None:
+        logged_paths.insert(-1, train_batch_asr_path)
     log_saved_artifacts(logged_paths)
 
 
@@ -977,6 +989,9 @@ def main() -> None:
         max_new_tokens=int(run_defaults.get("max_new_tokens", 512)),
         target_max_new_tokens=int(run_defaults.get("target_max_new_tokens", 256)),
         training_csv_name=str(run_defaults.get("training_csv_name", "adversary_v2_training_log.csv")),
+        training_rollouts_csv_name=str(
+            run_defaults.get("training_rollouts_csv_name", "adversary_v2_training_rollouts_full.csv")
+        ),
         eval_csv_name=str(run_defaults.get("eval_csv_name", "adversary_v2_eval_outputs.csv")),
     )
 
@@ -1103,6 +1118,7 @@ def main() -> None:
         print("Test eval metrics:", baseline_metrics)
 
     training_rows: list[dict[str, Any]] = []
+    rollout_rows: list[dict[str, Any]] = []
     final_eval = baseline_eval
     final_eval_rows = baseline_rows
     final_metrics = baseline_metrics
@@ -1244,6 +1260,31 @@ def main() -> None:
                     f"latency_ms_mean: {periodic_metrics['latency_ms_mean']:.1f}"
                 )
 
+            hf_bid = str(train_data[idx]["id"])
+            for rollout_index, (adv, tgt, ver, rew) in enumerate(
+                zip(adv_texts, target_resps, verdicts, batch_rewards, strict=True)
+            ):
+                rollout_rows.append(
+                    {
+                        "iteration": iteration,
+                        "rollout_index": rollout_index,
+                        "dataset_index": idx,
+                        "hf_behavior_id": hf_bid,
+                        "prompt": clean_text(prompt),
+                        "adversary_output": clean_text(adv),
+                        "target_response": clean_text(tgt),
+                        "reward": float(rew),
+                        "verdict": ver,
+                        "asr_score": float(rew),
+                        "loss": loss_val,
+                        "batch_size": log_batch,
+                        "adversary_policy": args.adversary_policy,
+                        "rejection_sampling": use_rs,
+                        "eval_asr": eval_asr,
+                        "eval_refusal_rate": eval_refusal_rate,
+                    }
+                )
+
             training_rows.append(
                 {
                     "iteration": iteration,
@@ -1278,6 +1319,7 @@ def main() -> None:
     baseline_df = pd.DataFrame(baseline_rows)
     final_df = pd.DataFrame(final_eval_rows)
     training_df = pd.DataFrame(training_rows)
+    rollout_df = pd.DataFrame(rollout_rows)
 
     auto_adapters = args.finetune
     adapter_path = _try_save_adapters_print(ctx, "adapters" if auto_adapters else None, results_dir)
@@ -1291,6 +1333,7 @@ def main() -> None:
         baseline_df=baseline_df,
         final_df=final_df,
         training_df=training_df,
+        rollout_df=rollout_df,
         run_seconds=run_seconds,
         adapter_path=adapter_path,
         config_snapshot=build_config_snapshot(defaults, cli_args=args),
