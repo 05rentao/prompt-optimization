@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 import sys
 from datetime import datetime, timezone
@@ -90,6 +91,33 @@ def write_csv(path: Path, df: pd.DataFrame) -> Path:
     """Write dataframe to CSV without index."""
     path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(path, index=False)
+    return path
+
+
+def append_csv_row(
+    path: Path,
+    row: dict[str, Any],
+    *,
+    fieldnames: list[str] | None = None,
+) -> Path:
+    """Append one CSV row; write header on first write. Dict/list values are JSON-encoded."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    exists = path.exists() and path.stat().st_size > 0
+    keys = fieldnames if fieldnames is not None else list(row.keys())
+
+    def _cell(v: Any) -> str:
+        if v is None:
+            return ""
+        if isinstance(v, (dict, list)):
+            return json.dumps(v, default=str, ensure_ascii=False)
+        return str(v)
+
+    out_row = {k: _cell(row.get(k)) for k in keys}
+    with path.open("a", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=keys, extrasaction="ignore")
+        if not exists:
+            writer.writeheader()
+        writer.writerow(out_row)
     return path
 
 

@@ -110,6 +110,8 @@ runs:
   # runs/adversary_v2.py: decomposed sub-questions; eval (--mode eval) or train + optional LoRA.
   adversary_v2:
     results_dir: "results/adversary_v2"
+    # HarmBench judge: examples per GPU batch (lower if judge OOMs after rollouts).
+    judge_batch_size: 4
     finetune: true
     hf_train_size: 100
     csv_val_size: 20
@@ -124,7 +126,7 @@ runs:
     rs_min_successes: 0
     max_new_tokens: 512
     max_subquestions: 12
-    target_sub_workers: 4
+    target_sub_workers: 16
     training_csv_name: "adversary_v2_training_log.csv"
     eval_csv_name: "adversary_v2_eval_outputs.csv"
   vector_steering_baseline:

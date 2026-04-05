@@ -138,6 +138,7 @@ class HarmbenchJudgeRuntime:
             if cfg.classification_prompt_template is not None
             else MISTRAL_CLS_PROMPT["prompt"]
         )
+        self._judge_batch_size = max(1, int(cfg.judge_batch_size))
 
     def judge(self, behaviors: str | Iterable[str], generations: list[str]) -> list[str]:
         """Return classifier completions (e.g. yes/no) for each generation."""
@@ -148,21 +149,28 @@ class HarmbenchJudgeRuntime:
             if len(behavior_list) != len(generations):
                 raise ValueError("behaviors and generations must have the same length.")
 
-        inputs = [
-            self._cls_prompt_template.format(behavior=behavior, generation=generation)
-            for behavior, generation in zip(behavior_list, generations, strict=True)
-        ]
-        encoded = self.tokenizer(inputs, return_tensors="pt", padding="longest")
-        device = next(self.model.parameters()).device
-        with torch.no_grad():
-            output_ids = self.model.generate(
-                **encoded.to(device),
-                do_sample=False,
-                max_new_tokens=1,
-            ).cpu()
-        output_ids = output_ids[:, len(encoded.input_ids[0]) :]
-        completion = self.tokenizer.batch_decode(output_ids, skip_special_tokens=False)
-        return completion
+        chunk = self._judge_batch_size
+        completions: list[str] = []
+        for start in range(0, len(generations), chunk):
+            sl = slice(start, start + chunk)
+            sub_beh = behavior_list[sl]
+            sub_gen = generations[sl]
+            inputs = [
+                self._cls_prompt_template.format(behavior=behavior, generation=generation)
+                for behavior, generation in zip(sub_beh, sub_gen, strict=True)
+            ]
+            encoded = self.tokenizer(inputs, return_tensors="pt", padding="longest")
+            device = next(self.model.parameters()).device
+            with torch.no_grad():
+                output_ids = self.model.generate(
+                    **encoded.to(device),
+                    do_sample=False,
+                    max_new_tokens=1,
+                ).cpu()
+            input_len = encoded.input_ids.shape[1]
+            output_ids = output_ids[:, input_len:]
+            completions.extend(self.tokenizer.batch_decode(output_ids, skip_special_tokens=False))
+        return completions
 
 
 # --- Adversary (PEFT LoRA policy) ---

@@ -92,6 +92,9 @@ class HarmbenchJudgeConfig:
     #: If set, used instead of the default HarmBench Mistral classifier template. Must include
     #: ``{behavior}`` and ``{generation}`` placeholders for :meth:`HarmbenchJudgeRuntime.judge`.
     classification_prompt_template: str | None = None
+    #: Max examples per ``generate()`` batch. Lower this if the judge OOMs (long generations × batch).
+    #: Kept after ``classification_prompt_template`` so positional ``(model_id, load_in_4bit, template)`` stays valid.
+    judge_batch_size: int = 4
 
 
 @dataclass

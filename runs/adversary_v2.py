@@ -9,6 +9,8 @@ sampling), ``--no-finetune``, HF train pool + CSV val/test. Rollout: decompose �
 multi-target → concat → ``compute_reward_and_verdict``.
 
 **Modes:** ``--mode eval`` — single test-CSV eval, ``adversary_v2_outputs.csv`` + metrics JSON.
+During eval, also writes ``adversary_v2_outputs.partial.csv`` (row-by-row) and
+``adversary_v2_adversary_calls.jsonl`` (one JSON object per behavior) unless ``--no-save-incremental``.
 ``--mode train`` — baseline/final test eval, optional LoRA updates, full artifact suite.
 
 See ``src/runtime/README.md`` and ``week-11-adversary-experiments.md``.
@@ -22,6 +24,7 @@ import re
 import sys
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +37,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from src.artifacts import (
+    append_csv_row,
     build_baseline_optimized_df,
     format_duration_human,
     log_saved_artifacts,
@@ -391,6 +395,14 @@ def decomposed_rollout(
     }
 
 
+def _resolved_incremental_paths(args: argparse.Namespace) -> tuple[Path | None, Path | None]:
+    """Incremental CSV + adversary JSONL under ``results_dir``; disabled with ``--no-save-incremental``."""
+    if getattr(args, "no_save_incremental", False):
+        return None, None
+    rd = Path(args.results_dir).resolve()
+    return rd / "adversary_v2_outputs.partial.csv", rd / "adversary_v2_adversary_calls.jsonl"
+
+
 def _evaluation_result_to_metrics(ev: EvaluationResult, latency_ms_mean: float) -> dict[str, float]:
     aggregate_score = ev.mean_refusal_score
     if aggregate_score is None:
@@ -419,11 +431,21 @@ def run_decomposed_eval(
     target_sub_workers: int,
     adversary_temperature: float,
     adversary_top_p: float,
+    incremental_outputs_path: Path | None = None,
+    adversary_calls_log_path: Path | None = None,
 ) -> tuple[EvaluationResult, list[dict[str, Any]]]:
     behaviors: list[str] = []
     generations: list[str] = []
     rows: list[dict[str, Any]] = []
     n_ex = len(examples)
+    incremental_fieldnames: list[str] | None = None
+
+    if incremental_outputs_path is not None:
+        incremental_outputs_path.parent.mkdir(parents=True, exist_ok=True)
+        incremental_outputs_path.unlink(missing_ok=True)
+    if adversary_calls_log_path is not None:
+        adversary_calls_log_path.parent.mkdir(parents=True, exist_ok=True)
+        adversary_calls_log_path.unlink(missing_ok=True)
 
     for bi, ex in enumerate(examples):
         behavior = ex["prompt"]
@@ -491,6 +513,26 @@ def run_decomposed_eval(
             }
         )
 
+        if incremental_outputs_path is not None:
+            if incremental_fieldnames is None:
+                incremental_fieldnames = list(rows[-1].keys())
+            append_csv_row(incremental_outputs_path, rows[-1], fieldnames=incremental_fieldnames)
+        if adversary_calls_log_path is not None:
+            log_entry = {
+                "ts_utc": datetime.now(timezone.utc).isoformat(),
+                "behavior_index": bi + 1,
+                "n_behaviors": n_ex,
+                "id": eid,
+                "behavior": behavior,
+                "adversary_latency_ms": adv_ms,
+                "parse_ms": parse_ms,
+                "n_subquestions": len(subs),
+                "target_latency_ms_sum": target_total_ms,
+                "adversary_raw": adversary_raw,
+            }
+            with adversary_calls_log_path.open("a", encoding="utf-8") as log_f:
+                log_f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
+
     df = pd.DataFrame(rows)
     lat_mean = float(df["latency_ms_total"].mean()) if not df.empty else 0.0
     ev = evaluate_outputs(
@@ -510,6 +552,7 @@ def _decomposed_eval_suite(
     ctx: RunContext,
     adversary_system: str,
 ) -> tuple[EvaluationResult, list[dict[str, Any]], dict[str, float]]:
+    inc_path, adv_log = _resolved_incremental_paths(args)
     ev, rows = run_decomposed_eval(
         eval_examples,
         ctx,
@@ -522,6 +565,8 @@ def _decomposed_eval_suite(
         target_sub_workers=args.target_sub_workers,
         adversary_temperature=args.adversary_temperature,
         adversary_top_p=args.adversary_top_p,
+        incremental_outputs_path=inc_path,
+        adversary_calls_log_path=adv_log,
     )
     df = pd.DataFrame(rows)
     lat_mean = float(df["latency_ms_total"].mean()) if not df.empty else 0.0
@@ -818,6 +863,18 @@ def parse_args(defaults: dict[str, Any]) -> argparse.Namespace:
     )
     parser.add_argument("--rs-budget", type=int, default=run_defaults.get("rs_budget", 5))
     parser.add_argument("--rs-min-successes", type=int, default=run_defaults.get("rs_min_successes", 0))
+    parser.add_argument(
+        "--judge-batch-size",
+        type=int,
+        default=int(run_defaults.get("judge_batch_size", 4)),
+        help="HarmBench judge: max examples per GPU batch (lower if judge OOMs on long generations).",
+    )
+    parser.add_argument(
+        "--no-save-incremental",
+        action="store_true",
+        default=False,
+        help="Disable per-behavior partial CSV and adversary JSONL under results_dir.",
+    )
     args = parser.parse_args()
     if args.rs_min_successes > 0 and args.adversary_policy == "rloo":
         parser.error("Rejection sampling (--rs-min-successes > 0) requires --adversary-policy reinforce, not rloo.")
@@ -859,6 +916,7 @@ def _build_context(args: argparse.Namespace, defaults: dict[str, Any], device: s
             HarmbenchJudgeConfig(
                 model_id=args.judge_model_id,
                 classification_prompt_template=ADVERSARY_V2_JUDGE_CLASSIFICATION_TEMPLATE,
+                judge_batch_size=max(1, int(getattr(args, "judge_batch_size", 4))),
             )
         ),
         device=device,
@@ -884,7 +942,9 @@ def main() -> None:
     ft_note = "" if getattr(args, "finetune", True) else " | finetune=off"
     print(
         f"[adversary_v2] config: mode={args.mode} | optimizer={policy_label}{rs_note}{ft_note} | "
-        f"rs_min_successes={args.rs_min_successes} rs_budget={args.rs_budget}"
+        f"rs_min_successes={args.rs_min_successes} rs_budget={args.rs_budget} | "
+        f"judge_batch_size={getattr(args, 'judge_batch_size', 4)} | "
+        f"incremental_save={'off' if getattr(args, 'no_save_incremental', False) else 'on'}"
     )
 
     if not (args.harmbench_csv_path or "").strip():
@@ -934,6 +994,8 @@ def main() -> None:
             f"[adversary_v2] eval mode | n={len(test_examples)} | eval={args.eval_method} | csv={resolved_csv}",
             flush=True,
         )
+        results_dir.mkdir(parents=True, exist_ok=True)
+        inc_path, adv_log = _resolved_incremental_paths(args)
         ev, rows = run_decomposed_eval(
             test_examples,
             ctx,
@@ -946,11 +1008,12 @@ def main() -> None:
             target_sub_workers=args.target_sub_workers,
             adversary_temperature=args.adversary_temperature,
             adversary_top_p=args.adversary_top_p,
+            incremental_outputs_path=inc_path,
+            adversary_calls_log_path=adv_log,
         )
         df = pd.DataFrame(rows)
         lat_mean = float(df["latency_ms_total"].mean()) if not df.empty else 0.0
         metrics = _evaluation_result_to_metrics(ev, lat_mean)
-        results_dir.mkdir(parents=True, exist_ok=True)
         write_csv(results_dir / "adversary_v2_outputs.csv", df)
         eval_run_s = time.time() - run_start
         write_json(
@@ -993,6 +1056,10 @@ def main() -> None:
         )
         print(f"[adversary_v2] metrics: {metrics}", flush=True)
         print(f"[adversary_v2] wrote: {results_dir / 'adversary_v2_outputs.csv'}", flush=True)
+        if inc_path is not None:
+            print(f"[adversary_v2] incremental rows: {inc_path}", flush=True)
+        if adv_log is not None:
+            print(f"[adversary_v2] adversary call log: {adv_log}", flush=True)
         print(
             f"[adversary_v2] done in {eval_run_s:.1f} s | "
             f"run_timing.json → {results_dir / 'run_timing.json'} | append log → {timing_log}",
@@ -1026,6 +1093,7 @@ def main() -> None:
         flush=True,
     )
 
+    results_dir.mkdir(parents=True, exist_ok=True)
     baseline_eval, baseline_rows, baseline_metrics = _decomposed_eval_suite(
         test_eval_examples, args, train_cfg, eval_cfg, ctx, adversary_system
     )

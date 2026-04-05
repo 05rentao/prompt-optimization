@@ -34,7 +34,7 @@ Default behaviors CSV: `data/harmbench_behaviors.csv` via `runs.adversary.harmbe
 | **Rewriter** | Named presets + optional `--attacker-instruction` | Built-in Lead Safety Architect template with `{{behavior}}` (or `--adversary-system-prompt-file`; legacy files omit the placeholder) |
 | **Target calls per behavior** | 1 | 1 + (number of parsed sub-questions) |
 | **v1-only flags** | `--adversary-prompt` | — |
-| **v2-only flags** | — | `--max-subquestions`, `--target-sub-workers`, `--adversary-system-prompt-file`, `--adversary-temperature`, `--adversary-top-p` |
+| **v2-only flags** | — | `--max-subquestions`, `--target-sub-workers`, `--adversary-system-prompt-file`, `--adversary-temperature`, `--adversary-top-p`, `--judge-batch-size`, `--no-save-incremental` |
 | **Shared training flags** | (via `runs.adversary` / merged defaults) | policy, RS, `iterations`, `lr`, `--no-finetune`, HF + CSV sizes |
 
 ---
@@ -159,6 +159,8 @@ Behavior → adversary emits **numbered sub-questions** (`START_DECOMPOSITION` �
 | `--target-sub-workers` | Parallelism for **sub-question** target calls. |
 | `--adversary-system-prompt-file` | Replace built-in template; use `{{behavior}}` in the file to inject the HLD per line (else behavior stays in the user turn). |
 | `--adversary-temperature`, `--adversary-top-p` | Sampling for decomposition text (target stays temperature 0 in rollout). |
+| `--judge-batch-size` | HarmBench judge: max rows per GPU `generate()` batch (default from `runs.adversary_v2.judge_batch_size`, often `4`). Lower if the **judge step** hits CUDA OOM after rollouts (large batched prompts when many long concatenated generations are scored at once). |
+| `--no-save-incremental` | Disable streaming artifacts (see below). |
 
 **Training hyperparameters** (`iterations`, `lr`, `eval_every`, `weight_decay`) come from merged YAML under **`runs.adversary_v2`** (and inherited `runs.adversary` defaults) — no `--iterations` / `--lr` CLI flags here either.
 
@@ -187,6 +189,8 @@ uv run python runs/adversary_v2.py --max-subquestions 8 --target-sub-workers 4 -
 ```
 
 **Throughput:** `--max-subquestions` sets **load per behavior**; `--target-sub-workers` sets overlap among sub-question calls. See [§8](#8-throughput-and-target-concurrency).
+
+**Incremental saves (default):** While iterating behaviors, the run appends **`adversary_v2_outputs.partial.csv`** (one row per finished behavior) and **`adversary_v2_adversary_calls.jsonl`** (one JSON object per adversary completion, including raw decomposition text). Files are reset at the start of each `run_decomposed_eval` (each eval suite). Use **`--no-save-incremental`** to skip. Final **`adversary_v2_outputs.csv`** is still written when the run completes.
 
 **Artifacts (summary):** `eval` → `adversary_v2_outputs.csv` + `adversary_v2_metrics.json`. `train` → full suite including `adversary_v2_run_metrics.json`, training log, plots, `adapters/` when fine-tuning. **Full list:** [Appendix B](#appendix-b-adversary_v2py).
 
@@ -277,7 +281,7 @@ Staged REINFORCE/RLOO (and optional RS) with **fixed** YAML/CLI attacker + defen
 | Script | Held-out test ASR | Periodic val | Other |
 | --- | --- | --- | --- |
 | `adversary_run.py` | `adversary_run_metrics.json` → `final_metrics.asr` | `adversary_training_log.csv` → `eval_asr` | Plots when fine-tuning |
-| `adversary_v2.py` | Eval: `adversary_v2_metrics.json`. Train: `adversary_v2_run_metrics.json` | Training log when fine-tuning | Row-level `adversary_v2_outputs.csv` |
+| `adversary_v2.py` | Eval: `adversary_v2_metrics.json`. Train: `adversary_v2_run_metrics.json` | Training log when fine-tuning | Row-level `adversary_v2_outputs.csv`; optional **`adversary_v2_outputs.partial.csv`** + **`adversary_v2_adversary_calls.jsonl`** during the run (unless `--no-save-incremental`) |
 | `coev_v2_run.py` | `coev_v2_run_metrics.json` | `coev_v2_training_log.csv` | Stage CSV + plots |
 
 ---
@@ -346,7 +350,7 @@ Staged REINFORCE/RLOO (and optional RS) with **fixed** YAML/CLI attacker + defen
 
 **Adversary default:** `ADVERSARY_V2_SYSTEM_PROMPT_TEMPLATE` (Piecewise Vulnerability Assessment); per-behavior `{{behavior}}` substitution in system, short user nudge to emit tags only.
 
-**Judge:** Decomposition-specific `[INST]` template (`ADVERSARY_V2_JUDGE_CLASSIFICATION_TEMPLATE`); refers to HLD and “technical sub-components”; not identical to classic single-reply HarmBench classifier wording.
+**Judge:** Decomposition-specific `[INST]` template (`ADVERSARY_V2_JUDGE_CLASSIFICATION_TEMPLATE`); refers to HLD and “technical sub-components”; not identical to classic single-reply HarmBench classifier wording. Scoring runs in **chunks** of `judge_batch_size` (YAML / `--judge-batch-size`) so the judge does not allocate one oversized batch over all test rows at once (avoids CUDA OOM when concatenated generations are long and VRAM is tight with the adversary still loaded).
 
 **Parsing (`extract_subquestions`):** Text between `START_DECOMPOSITION` and `END_DECOMPOSITION` is scanned line-by-line for `N.` / `N)` items (ellipsis-only lines skipped). A single numbered item is valid. If markers are present but nothing parses, the list is empty and `decomposed_rollout` falls back to one trajectory. Without markers, the full text is scanned for numbered lines, then bullets, then a single prose chunk.
 
@@ -357,11 +361,13 @@ Staged REINFORCE/RLOO (and optional RS) with **fixed** YAML/CLI attacker + defen
 | File | Content |
 | --- | --- |
 | `adversary_v2_outputs.csv` | Per behavior: raw decomposition, subquestions JSON, concatenated generation, latencies, scores. |
+| `adversary_v2_outputs.partial.csv` | *(Unless `--no-save-incremental`.)* Same columns as above, **appended row-by-row** during the eval loop so a crash still leaves completed rows. |
+| `adversary_v2_adversary_calls.jsonl` | *(Unless `--no-save-incremental`.)* One JSON line per behavior with timestamps, ids, latencies, and full `adversary_raw` text. |
 | `adversary_v2_metrics.json` | Aggregate metrics + config + `config_snapshot`. |
 
 **Artifacts (train)** — same pattern as v1 before/after naming, plus v2-specific training log filename from `runs.adversary_v2.training_csv_name` (default `adversary_v2_training_log.csv`).
 
-**Config:** `_merge_run_defaults`: `runs.adversary` ⊕ `runs.adversary_v2`. **Entrypoint:** `patch_run_args_from_config(..., run="adversary")` for model IDs and vLLM URL.
+**Config:** `_merge_run_defaults`: `runs.adversary` ⊕ `runs.adversary_v2` (includes **`judge_batch_size`** for the HarmBench judge). **Entrypoint:** `patch_run_args_from_config(..., run="adversary")` for model IDs and vLLM URL.
 
 ---
 
