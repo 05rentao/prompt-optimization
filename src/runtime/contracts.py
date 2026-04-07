@@ -31,7 +31,7 @@ class TargetModelConfig:
 class ModelConfig:
     """Shared adversary model config used by CoEV-style runners."""
 
-    model_id: str = "unsloth/Qwen2.5-7B-Instruct-bnb-4bit"
+    model_id: str = ""
     max_seq_length: int = 2048
     load_in_4bit: bool = True
     lora_r: int = 16
@@ -63,7 +63,7 @@ class GepaOptimizationConfig:
     max_metric_calls: int = 100
     max_tokens: int = 120
     temperature: float = 0.0
-    reflection_model_name: str = "meta-llama/Llama-3.1-8B-Instruct"
+    reflection_model_name: str = ""
 
 
 @dataclass

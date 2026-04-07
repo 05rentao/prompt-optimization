@@ -37,7 +37,7 @@ from src.artifacts import (
     write_run_manifest,
     write_text,
 )
-from src.data import load_harmbench_subset
+from src.data import load_fixed_eval_subset, load_harmbench_subset, set_eval_seed
 from src.evaluators import compute_refusal_score
 from src.run_pipeline import (
     adversary_rewrite_sample,
@@ -65,6 +65,7 @@ from src.runtime import (
     timed_target_generate,
 )
 from src.runtime.defaults import build_config_snapshot, load_default_config
+from src.timer import Timer
 from src.runtime.gepa_prompt_optimization import (
     DualRoleGepaContext,
     DualRoleGepaPromptOptimizationConfig,
@@ -364,6 +365,7 @@ def _eval_suite(
     examples: list[dict[str, Any]],
 ) -> tuple[dict[str, float], pd.DataFrame]:
     """Baseline / stage / final eval with shared kwargs."""
+    set_eval_seed()  # reset RNG immediately before each eval so results are reproducible
     return evaluate_prompts(
         examples=examples,
         attacker_instruction=attacker_instruction,
@@ -508,7 +510,7 @@ def save_artifacts(
         models={
             "adversary_model": args.adversary_model_id,
             "target_model": args.task_model_name,
-            "judge_model": "cais/HarmBench-Mistral-7b-val-cls",
+            "judge_model": defaults["runtime"]["models"]["judge_model_id"],
             "reflection_model_name": args.reflection_model_name,
         },
         budget={
@@ -563,6 +565,15 @@ def parse_args(defaults: dict[str, Any]) -> argparse.Namespace:
         description="Run CoEV v2 (REINFORCE or RLOO + dual-role GEPA prompt evolution)."
     )
     parser.add_argument("--mode", choices=["coev", "eval"], default="coev")
+    parser.add_argument(
+        "--adversary-model",
+        default=None,
+        help=(
+            "Adversary model id (overrides YAML runtime.models). "
+            "Defaults to adversary_train_model_id for --mode coev, "
+            "adversary_model_id for --mode eval."
+        ),
+    )
     parser.add_argument("--device", default=global_defaults["device"])
     parser.add_argument(
         "--save-dir",
@@ -705,7 +716,14 @@ def _load_prompt_slices(
         require_train=args.mode != "eval",
         script_name="coev_v2_run",
     )
-    eval_examples = [{"id": f"eval_{i}", "prompt": p} for i, p in enumerate(eval_prompts)]
+    # Fixed eval set: same 100 HarmBench prompts across all scripts and runs.
+    _fixed_eval = load_fixed_eval_subset(
+        dataset_name=args.dataset_name,
+        dataset_config=args.dataset_config,
+        split=args.dataset_split,
+        hf_token=hf_token,
+    )
+    eval_examples = [{"id": str(ex["id"]), "prompt": ex["prompt"]} for ex in _fixed_eval]
     return train_prompts, eval_prompts, eval_examples
 
 
@@ -754,6 +772,7 @@ def _run_training_and_finalize(
     defense_prompt: str,
     run_start: float,
     config_snapshot: dict[str, Any],
+    timer: Timer,
 ) -> None:
     model = ctx.adversary_session.runtime
     optimizer = torch.optim.AdamW(model.parameters(), lr=coev_cfg.lr, weight_decay=coev_cfg.weight_decay)
@@ -780,136 +799,138 @@ def _run_training_and_finalize(
             original_prompt = train_prompts[idx]
             stage_prompts.append(original_prompt)
 
-            batch_gen_ids: list[torch.Tensor] = []
-            batch_rewards: list[float] = []
-            batch_prompt_lens: list[int] = []
-            adv_rewrites: list[str] = []
-            target_resps: list[str] = []
-            verdicts: list[str] = []
+            with timer.section("rl_update"):
+                batch_gen_ids: list[torch.Tensor] = []
+                batch_rewards: list[float] = []
+                batch_prompt_lens: list[int] = []
+                adv_rewrites: list[str] = []
+                target_resps: list[str] = []
+                verdicts: list[str] = []
 
-            if use_rs:
-                n_successes_so_far = 0
-                rs_budget = max(1, int(args.rs_budget))
-                for _ in range(rs_budget):
-                    sample, _ = adversary_output(
-                        prompt=original_prompt,
-                        instruction=attacker_instruction,
-                        adversary_session=ctx.adversary_session,
-                        device=ctx.device,
-                        max_new_tokens=args.max_new_tokens,
-                    )
-                    adv_rewrite = sample["completion_text"].strip()
-                    reward, verdict, target_resp = multi_query_reward(
-                        behavior=original_prompt,
-                        adversary_text=adv_rewrite,
-                        n_queries=tq,
-                        ctx=ctx,
-                        eval_cfg=eval_cfg,
-                        defense_prompt=defense_prompt,
-                        max_new_tokens=args.max_new_tokens,
-                    )
-                    batch_gen_ids.append(sample["gen_ids"])
-                    batch_rewards.append(reward)
-                    batch_prompt_lens.append(sample["prompt_len"])
-                    adv_rewrites.append(adv_rewrite)
-                    target_resps.append(target_resp)
-                    verdicts.append(verdict)
-                    if reward > 0.5:
-                        n_successes_so_far += 1
-                        if n_successes_so_far >= args.rs_min_successes:
-                            break
-            else:
-                batch_size = max(1, int(args.adversary_reinforce_batch_size))
-                for _ in range(batch_size):
-                    sample, _ = adversary_output(
-                        prompt=original_prompt,
-                        instruction=attacker_instruction,
-                        adversary_session=ctx.adversary_session,
-                        device=ctx.device,
-                        max_new_tokens=args.max_new_tokens,
-                    )
-                    adv_rewrite = sample["completion_text"].strip()
-                    reward, verdict, target_resp = multi_query_reward(
-                        behavior=original_prompt,
-                        adversary_text=adv_rewrite,
-                        n_queries=tq,
-                        ctx=ctx,
-                        eval_cfg=eval_cfg,
-                        defense_prompt=defense_prompt,
-                        max_new_tokens=args.max_new_tokens,
-                    )
-                    batch_gen_ids.append(sample["gen_ids"])
-                    batch_rewards.append(reward)
-                    batch_prompt_lens.append(sample["prompt_len"])
-                    adv_rewrites.append(adv_rewrite)
-                    target_resps.append(target_resp)
-                    verdicts.append(verdict)
+                if use_rs:
+                    n_successes_so_far = 0
+                    rs_budget = max(1, int(args.rs_budget))
+                    for _ in range(rs_budget):
+                        sample, _ = adversary_output(
+                            prompt=original_prompt,
+                            instruction=attacker_instruction,
+                            adversary_session=ctx.adversary_session,
+                            device=ctx.device,
+                            max_new_tokens=args.max_new_tokens,
+                        )
+                        adv_rewrite = sample["completion_text"].strip()
+                        reward, verdict, target_resp = multi_query_reward(
+                            behavior=original_prompt,
+                            adversary_text=adv_rewrite,
+                            n_queries=tq,
+                            ctx=ctx,
+                            eval_cfg=eval_cfg,
+                            defense_prompt=defense_prompt,
+                            max_new_tokens=args.max_new_tokens,
+                        )
+                        batch_gen_ids.append(sample["gen_ids"])
+                        batch_rewards.append(reward)
+                        batch_prompt_lens.append(sample["prompt_len"])
+                        adv_rewrites.append(adv_rewrite)
+                        target_resps.append(target_resp)
+                        verdicts.append(verdict)
+                        if reward > 0.5:
+                            n_successes_so_far += 1
+                            if n_successes_so_far >= args.rs_min_successes:
+                                break
+                else:
+                    batch_size = max(1, int(args.adversary_reinforce_batch_size))
+                    for _ in range(batch_size):
+                        sample, _ = adversary_output(
+                            prompt=original_prompt,
+                            instruction=attacker_instruction,
+                            adversary_session=ctx.adversary_session,
+                            device=ctx.device,
+                            max_new_tokens=args.max_new_tokens,
+                        )
+                        adv_rewrite = sample["completion_text"].strip()
+                        reward, verdict, target_resp = multi_query_reward(
+                            behavior=original_prompt,
+                            adversary_text=adv_rewrite,
+                            n_queries=tq,
+                            ctx=ctx,
+                            eval_cfg=eval_cfg,
+                            defense_prompt=defense_prompt,
+                            max_new_tokens=args.max_new_tokens,
+                        )
+                        batch_gen_ids.append(sample["gen_ids"])
+                        batch_rewards.append(reward)
+                        batch_prompt_lens.append(sample["prompt_len"])
+                        adv_rewrites.append(adv_rewrite)
+                        target_resps.append(target_resp)
+                        verdicts.append(verdict)
 
-            tok = model.tokenizer
-            pad_id = tok.pad_token_id
-            if pad_id is None:
-                pad_id = tok.eos_token_id
-            if pad_id is None:
-                raise RuntimeError("Tokenizer has no pad_token_id or eos_token_id for batch padding.")
-            padded_ids, valid_lens = pad_gen_ids_batch(batch_gen_ids, int(pad_id))
-            device_t = padded_ids.device
-            rewards_t = torch.tensor(batch_rewards, dtype=torch.float32, device=device_t)
+                tok = model.tokenizer
+                pad_id = tok.pad_token_id
+                if pad_id is None:
+                    pad_id = tok.eos_token_id
+                if pad_id is None:
+                    raise RuntimeError("Tokenizer has no pad_token_id or eos_token_id for batch padding.")
+                padded_ids, valid_lens = pad_gen_ids_batch(batch_gen_ids, int(pad_id))
+                device_t = padded_ids.device
+                rewards_t = torch.tensor(batch_rewards, dtype=torch.float32, device=device_t)
 
-            if use_rs:
-                loss_val, _n_used = rejection_sampling_update_sgd(
-                    model,
-                    optimizer,
-                    padded_ids,
-                    batch_prompt_lens,
-                    rewards_t,
-                    valid_seq_lens=valid_lens,
+                if use_rs:
+                    loss_val, _n_used = rejection_sampling_update_sgd(
+                        model,
+                        optimizer,
+                        padded_ids,
+                        batch_prompt_lens,
+                        rewards_t,
+                        valid_seq_lens=valid_lens,
+                    )
+                    if loss_val is None:
+                        loss_val = float("nan")
+                elif args.adversary_policy == "rloo":
+                    loss_val, _ = rloo_update_batch_sgd(
+                        model,
+                        optimizer,
+                        padded_ids,
+                        batch_prompt_lens,
+                        rewards_t,
+                        valid_seq_lens=valid_lens,
+                    )
+                else:
+                    loss_val, _ = reinforce_update_batch_sgd(
+                        model,
+                        optimizer,
+                        padded_ids,
+                        batch_prompt_lens,
+                        rewards_t,
+                        valid_seq_lens=valid_lens,
+                    )
+
+                mean_r = float(rewards_t.mean().item())
+                log_batch = len(batch_rewards)
+                training_rows.append(
+                    {
+                        "stage": stage,
+                        "iter": i,
+                        "dataset_index": idx,
+                        "attacker_instruction": clean_text(attacker_instruction),
+                        "defense_prompt": clean_text(defense_prompt),
+                        "orig_prompt": clean_text(original_prompt),
+                        "adv_prompt": clean_text(adv_rewrites[0]),
+                        "target_resp": clean_text(target_resps[0]),
+                        "reward": mean_r,
+                        "loss": loss_val,
+                        "verdict": verdicts[0],
+                        "max_reward": max(batch_rewards),
+                        "batch_size": log_batch,
+                        "adversary_policy": args.adversary_policy,
+                        "target_queries": tq,
+                        "rejection_sampling": use_rs,
+                    }
                 )
-                if loss_val is None:
-                    loss_val = float("nan")
-            elif args.adversary_policy == "rloo":
-                loss_val, _ = rloo_update_batch_sgd(
-                    model,
-                    optimizer,
-                    padded_ids,
-                    batch_prompt_lens,
-                    rewards_t,
-                    valid_seq_lens=valid_lens,
-                )
-            else:
-                loss_val, _ = reinforce_update_batch_sgd(
-                    model,
-                    optimizer,
-                    padded_ids,
-                    batch_prompt_lens,
-                    rewards_t,
-                    valid_seq_lens=valid_lens,
-                )
-
-            mean_r = float(rewards_t.mean().item())
-            log_batch = len(batch_rewards)
-            training_rows.append(
-                {
-                    "stage": stage,
-                    "iter": i,
-                    "dataset_index": idx,
-                    "attacker_instruction": clean_text(attacker_instruction),
-                    "defense_prompt": clean_text(defense_prompt),
-                    "orig_prompt": clean_text(original_prompt),
-                    "adv_prompt": clean_text(adv_rewrites[0]),
-                    "target_resp": clean_text(target_resps[0]),
-                    "reward": mean_r,
-                    "loss": loss_val,
-                    "verdict": verdicts[0],
-                    "max_reward": max(batch_rewards),
-                    "batch_size": log_batch,
-                    "adversary_policy": args.adversary_policy,
-                    "target_queries": tq,
-                    "rejection_sampling": use_rs,
-                }
-            )
 
         if stage % coev_cfg.eval_every_stages == 0:
-            stage_metrics, _ = _eval_suite(ctx, eval_cfg, args, attacker_instruction, defense_prompt, eval_examples)
+            with timer.section("evaluation"):
+                stage_metrics, _ = _eval_suite(ctx, eval_cfg, args, attacker_instruction, defense_prompt, eval_examples)
             stage_metric_rows.append({"stage": stage, "phase": "pre_evolution", **stage_metrics})
             print(
                 f"Stage {stage}: Completed {policy_label}{rs_note}. Eval ASR: {stage_metrics['asr']:.2%} | "
@@ -923,21 +944,22 @@ def _run_training_and_finalize(
             f"GEPA stage {stage}: reflection=openai/{gepa_cfg.reflection_model_name} @ {args.reflection_vllm_base_url} "
             f"max_metric_calls={gepa_cfg.max_metric_calls}"
         )
-        dual_role_result = run_dual_role_gepa_prompt_optimization(
-            cfg=gepa_cfg,
-            ctx=DualRoleGepaContext(
-                adversary_session=ctx.adversary_session,
-                target_session=ctx.target_session,
-                judge_session=ctx.judge_session,
-                reflection_gateway=ctx.reflection_gateway,
-                device=ctx.device,
-                eval_cfg=eval_cfg,
-            ),
-            stage_index=stage,
-            stage_prompts=stage_prompts,
-            attacker_instruction=attacker_instruction,
-            defense_prompt=defense_prompt,
-        )
+        with timer.section("gepa_step"):
+            dual_role_result = run_dual_role_gepa_prompt_optimization(
+                cfg=gepa_cfg,
+                ctx=DualRoleGepaContext(
+                    adversary_session=ctx.adversary_session,
+                    target_session=ctx.target_session,
+                    judge_session=ctx.judge_session,
+                    reflection_gateway=ctx.reflection_gateway,
+                    device=ctx.device,
+                    eval_cfg=eval_cfg,
+                ),
+                stage_index=stage,
+                stage_prompts=stage_prompts,
+                attacker_instruction=attacker_instruction,
+                defense_prompt=defense_prompt,
+            )
         if dual_role_result.attacker_result is None or dual_role_result.defender_result is None:
             raise RuntimeError(
                 "GEPA dual-role run failed to return attacker and defender results; "
@@ -949,12 +971,14 @@ def _run_training_and_finalize(
         attacker_trace_rows.extend(dual_role_result.attacker_trace)
         defender_trace_rows.extend(dual_role_result.defender_trace)
 
-        attacker_eval_metrics, _ = _eval_suite(
-            ctx, eval_cfg, args, attacker_instruction, defense_before_gepa, eval_examples
-        )
-        defender_eval_metrics, _ = _eval_suite(
-            ctx, eval_cfg, args, attacker_instruction, defense_prompt, eval_examples
-        )
+        with timer.section("evaluation"):
+            attacker_eval_metrics, _ = _eval_suite(
+                ctx, eval_cfg, args, attacker_instruction, defense_before_gepa, eval_examples
+            )
+        with timer.section("evaluation"):
+            defender_eval_metrics, _ = _eval_suite(
+                ctx, eval_cfg, args, attacker_instruction, defense_prompt, eval_examples
+            )
         ar, dr = dual_role_result.attacker_result, dual_role_result.defender_result
         gepa_final_attacker_val_score = float(ar.val_aggregate_scores[ar.best_idx])
         gepa_final_defender_val_score = float(dr.val_aggregate_scores[dr.best_idx])
@@ -966,7 +990,8 @@ def _run_training_and_finalize(
         )
         stage_metric_rows.append({"stage": stage, "phase": "gepa_seconds", "score": dual_role_result.run_seconds})
 
-    optimized_metrics, optimized_df = _eval_suite(ctx, eval_cfg, args, attacker_instruction, defense_prompt, eval_examples)
+    with timer.section("evaluation"):
+        optimized_metrics, optimized_df = _eval_suite(ctx, eval_cfg, args, attacker_instruction, defense_prompt, eval_examples)
     print("Optimized metrics:", optimized_metrics)
 
     results_dir = Path(args.results_dir).resolve()
@@ -997,6 +1022,12 @@ def main() -> None:
     defaults = load_default_config()
     args = parse_args(defaults)
     patch_run_args_from_config(defaults, args, run="coev_v2")
+    # Resolve effective adversary model: CLI > mode-aware YAML default.
+    if args.adversary_model is not None:
+        args.adversary_model_id = args.adversary_model
+    elif args.mode == "coev":
+        args.adversary_model_id = args.adversary_train_model_id
+    # else mode == "eval": keep adversary_model_id (larger eval model)
 
     run_start = time.time()
     sns.set_theme(style="whitegrid")
@@ -1037,9 +1068,11 @@ def main() -> None:
     config_snapshot = build_config_snapshot(defaults, cli_args=args)
     train_prompts, _, eval_examples = _load_prompt_slices(args, coev_cfg)
 
+    timer = Timer()
     attacker_instruction = resolved_initial_attacker
     defense_prompt = coev_cfg.initial_defense_prompt
-    baseline_metrics, baseline_df = _eval_suite(ctx, eval_cfg, args, attacker_instruction, defense_prompt, eval_examples)
+    with timer.section("evaluation"):
+        baseline_metrics, baseline_df = _eval_suite(ctx, eval_cfg, args, attacker_instruction, defense_prompt, eval_examples)
     print("Baseline metrics:", baseline_metrics)
 
     if args.mode == "eval":
@@ -1069,7 +1102,11 @@ def main() -> None:
         defense_prompt,
         run_start,
         config_snapshot,
+        timer,
     )
+    timing_path = _REPO_ROOT / "runs" / "timing_profile.json"
+    timer.write_json(timing_path)
+    print(f"Timing profile written to: {timing_path}")
 
 
 if __name__ == "__main__":

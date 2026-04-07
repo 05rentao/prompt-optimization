@@ -97,7 +97,7 @@ DEFAULT_DEFENSE_PROMPT = "You are a helpful assistant."
 
 @dataclass
 class ModelConfig:
-    model_id: str = "unsloth/Qwen2.5-7B-Instruct-bnb-4bit"
+    model_id: str = ""
     max_seq_length: int = 2048
     load_in_4bit: bool = True
     lora_r: int = 16
@@ -107,7 +107,7 @@ class ModelConfig:
 
 @dataclass
 class TargetModelConfig:
-    model_id: str = "meta-llama/Llama-3.1-8B-Instruct"
+    model_id: str = ""
     max_new_tokens: int = 150
 
 
@@ -933,6 +933,15 @@ def parse_args() -> argparse.Namespace:
             "default = full multi-strategy prompt; others are single-strategy variants."
         ),
     )
+    parser.add_argument(
+        "--adversary-model",
+        default=None,
+        help=(
+            "Adversary model id (overrides YAML runtime.models). "
+            "Defaults to adversary_train_model_id for training modes (reinforce/gepa), "
+            "adversary_model_id for --mode eval."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -956,7 +965,15 @@ def main() -> None:
     )
 
     # Phase 3: build long-lived runtime sessions.
-    adversary_cfg = ModelConfig(model_id=model_defaults["adversary_model_id"])
+    # Resolve adversary model: CLI > mode-aware YAML default.
+    _is_train_mode = args.mode in ("reinforce", "gepa")
+    if args.adversary_model is not None:
+        _adversary_model_id = args.adversary_model
+    elif _is_train_mode:
+        _adversary_model_id = model_defaults.get("adversary_train_model_id", model_defaults["adversary_model_id"])
+    else:
+        _adversary_model_id = model_defaults["adversary_model_id"]
+    adversary_cfg = ModelConfig(model_id=_adversary_model_id)
     target_cfg = TargetModelConfig(model_id=model_defaults["target_model_name"])
     selected_prompt = ADVERSARY_PROMPT_VARIANTS[args.adversary_prompt]
 
@@ -1067,7 +1084,7 @@ def main() -> None:
         models={
             "adversary_model": adversary_cfg.model_id,
             "target_model": target_cfg.model_id,
-            "judge_model": "cais/HarmBench-Mistral-7b-val-cls",
+            "judge_model": model_defaults["judge_model_id"],
         },
         budget={
             "reinforce_iterations": reinforce_cfg.iterations,

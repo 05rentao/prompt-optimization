@@ -1,11 +1,51 @@
 from __future__ import annotations
 
+import random as _random
 from typing import Any
 
 import pandas as pd
 from datasets import load_dataset
 
 from .types import GepaExampleRow, HarmBenchExampleRow
+
+# 100 fixed indices into the raw (unshuffled) HarmBench standard/train split.
+# Generated once at import time with seed 42; never changes between runs or scripts.
+EVAL_SUBSET_INDICES: list[int] = sorted(_random.Random(42).sample(range(400), 100))
+
+
+def set_eval_seed(seed: int = 42) -> None:
+    """Reset all RNG sources immediately before an evaluation pass.
+
+    Must be called inside the eval function (not once at startup) so that the
+    seed is in effect for each individual eval call. Calling it at startup lets
+    the seed drift across the run, making later evals non-reproducible.
+    """
+    import random
+    import numpy as np
+    import torch
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+def load_fixed_eval_subset(
+    dataset_name: str,
+    dataset_config: str | None,
+    split: str,
+    hf_token: str,
+    indices: list[int] = EVAL_SUBSET_INDICES,
+) -> list[HarmBenchExampleRow]:
+    """Load the fixed seeded eval subset from the raw (unshuffled) dataset.
+
+    No shuffle is applied so that each index always resolves to the same prompt
+    regardless of training seed or run order. All scripts that call this function
+    will evaluate on the same 100 HarmBench prompts, making results comparable.
+    """
+    ds = load_dataset(dataset_name, name=dataset_config, split=split, token=hf_token)
+    valid = [i for i in indices if i < len(ds)]
+    return [normalize_harmbench_record(dict(ds[i]), i) for i in valid]
 
 PROMPT_KEYS = [
     "prompt",

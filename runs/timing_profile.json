@@ -1,0 +1,17 @@
+{
+  "rl_update": {
+    "total_s": 0.146,
+    "mean_s": 0.0146,
+    "call_count": 10
+  },
+  "evaluation": {
+    "total_s": 0.0601,
+    "mean_s": 0.0086,
+    "call_count": 7
+  },
+  "gepa_step": {
+    "total_s": 0.0499,
+    "mean_s": 0.0249,
+    "call_count": 2
+  }
+}

@@ -132,10 +132,12 @@ def patch_run_args_from_config(
         args.reflection_model_name = models["reflection_model_name"]
     elif run == "coev_v2":
         args.adversary_model_id = models["adversary_model_id"]
+        args.adversary_train_model_id = models.get("adversary_train_model_id", models["adversary_model_id"])
         args.task_model_name = models["target_model_name"]
         args.reflection_model_name = models["reflection_model_name"]
     elif run == "adversary":
         args.adversary_model_id = models["adversary_model_id"]
+        args.adversary_train_model_id = models.get("adversary_train_model_id", models["adversary_model_id"])
         args.task_model_name = models["target_model_name"]
         args.judge_model_id = models["judge_model_id"]
     else:
