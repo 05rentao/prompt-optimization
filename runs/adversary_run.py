@@ -91,6 +91,8 @@ class AdversaryTrainingConfig:
     target_max_new_tokens: int = 150
     training_csv_name: str = "adversary_training_log.csv"
     eval_csv_name: str = "adversary_eval_outputs.csv"
+    length_penalty_weight: float = 0.0
+    length_penalty_min_tokens: int = 50
 
 
 @dataclass
@@ -156,6 +158,28 @@ def reward_from_response(
         eval_cfg=eval_cfg,
         judge_session=ctx.judge_session if eval_cfg.method == "judge" else None,
     )
+
+
+def shape_reward_with_length_penalty(
+    base_reward: float,
+    gen_ids: torch.Tensor,
+    prompt_len: int,
+    length_penalty_weight: float,
+    length_penalty_min_tokens: int,
+) -> float:
+    """Apply length-based reward shaping to discourage mode collapse to short outputs.
+
+    shaped = base_reward * (1 - w) + length_ratio * w
+
+    When w=0, returns base_reward unchanged (backward compatible).
+    Failed-but-long outputs receive a small positive signal; failed-but-short
+    outputs receive near-zero. This counteracts the shortening bias in REINFORCE/RLOO.
+    """
+    if length_penalty_weight <= 0.0:
+        return base_reward
+    completion_tokens = gen_ids.shape[-1] - prompt_len
+    length_ratio = min(completion_tokens / max(length_penalty_min_tokens, 1), 1.0)
+    return base_reward * (1.0 - length_penalty_weight) + length_ratio * length_penalty_weight
 
 
 def _evaluation_result_to_metrics(ev: EvaluationResult, latency_ms_mean: float) -> dict[str, float]:
@@ -526,6 +550,18 @@ def parse_args(defaults: dict[str, Any]) -> argparse.Namespace:
             "0 disables rejection sampling."
         ),
     )
+    parser.add_argument(
+        "--length-penalty-weight",
+        type=float,
+        default=run_defaults.get("length_penalty_weight", 0.0),
+        help="Weight for length-based reward shaping (0.0 disables).",
+    )
+    parser.add_argument(
+        "--length-penalty-min-tokens",
+        type=int,
+        default=run_defaults.get("length_penalty_min_tokens", 50),
+        help="Minimum completion tokens for full length bonus.",
+    )
     args = parser.parse_args()
     if args.rs_min_successes > 0 and args.adversary_policy == "rloo":
         parser.error(
@@ -573,6 +609,8 @@ def main() -> None:
         target_max_new_tokens=int(run_defaults.get("target_max_new_tokens", 150)),
         training_csv_name=run_defaults["training_csv_name"],
         eval_csv_name=run_defaults["eval_csv_name"],
+        length_penalty_weight=float(run_defaults.get("length_penalty_weight", 0.0)),
+        length_penalty_min_tokens=int(run_defaults.get("length_penalty_min_tokens", 50)),
     )
 
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -655,6 +693,10 @@ def main() -> None:
                         max_new_tokens=train_cfg.target_max_new_tokens,
                     )
                     reward, verdict = reward_from_response(prompt, target_response, eval_cfg, ctx)
+                    reward = shape_reward_with_length_penalty(
+                        reward, sampled["gen_ids"], sampled["prompt_len"],
+                        train_cfg.length_penalty_weight, train_cfg.length_penalty_min_tokens,
+                    )
                     batch_gen_ids.append(sampled["gen_ids"])
                     batch_rewards.append(reward)
                     batch_prompt_lens.append(sampled["prompt_len"])
@@ -684,6 +726,10 @@ def main() -> None:
                         max_new_tokens=train_cfg.target_max_new_tokens,
                     )
                     reward, verdict = reward_from_response(prompt, target_response, eval_cfg, ctx)
+                    reward = shape_reward_with_length_penalty(
+                        reward, sampled["gen_ids"], sampled["prompt_len"],
+                        train_cfg.length_penalty_weight, train_cfg.length_penalty_min_tokens,
+                    )
                     batch_gen_ids.append(sampled["gen_ids"])
                     batch_rewards.append(reward)
                     batch_prompt_lens.append(sampled["prompt_len"])
@@ -770,6 +816,10 @@ def main() -> None:
                     "rejection_sampling": use_rs,
                     "eval_asr": eval_asr,
                     "eval_refusal_rate": eval_refusal_rate,
+                    "length_penalty_weight": train_cfg.length_penalty_weight,
+                    "mean_completion_tokens": sum(
+                        g.shape[-1] - p for g, p in zip(batch_gen_ids, batch_prompt_lens)
+                    ) / max(len(batch_gen_ids), 1),
                 }
             )
 
