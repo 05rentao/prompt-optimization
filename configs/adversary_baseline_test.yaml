@@ -101,6 +101,6 @@ runs:
     train_slice_end: 100
     eval_slice_start: 100
     eval_slice_end: 150                   # was 120
-    adversary_reinforce_batch_size: 8     # was 4
+    adversary_reinforce_batch_size: 4     # reduced from 8 — OOM on 80GB H100
     training_csv_name: "adversary_training_log.csv"
     eval_csv_name: "adversary_eval_outputs.csv"
