@@ -502,6 +502,8 @@ def save_artifacts(
             "rs_budget": getattr(args, "rs_budget", 5),
             "rs_min_successes": getattr(args, "rs_min_successes", 0),
             "kl_coeff": getattr(args, "kl_coeff", 0.0),
+            "diversity_weight": getattr(args, "diversity_weight", 0.0),
+            "grad_accum_steps": getattr(args, "grad_accum_steps", 1),
         },
         config_snapshot=config_snapshot,
     )
@@ -550,6 +552,43 @@ def _compute_ref_log_prob_sums(
         lp_slice = ref_lp[i, start : start + comp_ids.size(0), :]
         ref_sums.append(torch.gather(lp_slice, -1, comp_ids.unsqueeze(-1)).squeeze(-1).sum())
     return torch.stack(ref_sums)
+
+
+_DIVERSITY_ENCODER: Any = None
+
+
+def _get_diversity_encoder() -> Any:
+    """Lazy-load the sentence-transformer encoder on first call (CPU, cached for the run)."""
+    global _DIVERSITY_ENCODER
+    if _DIVERSITY_ENCODER is None:
+        from sentence_transformers import SentenceTransformer
+        _DIVERSITY_ENCODER = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
+    return _DIVERSITY_ENCODER
+
+
+def _apply_diversity_bonus(
+    batch_rewards: list[float],
+    adv_texts: list[str],
+    diversity_weight: float,
+) -> tuple[list[float], float]:
+    """Add (1 - avg_cosine_similarity) * diversity_weight to each sample's reward.
+
+    Returns the updated rewards and the mean bonus applied (0.0 if skipped).
+    Only active when batch size > 1 and diversity_weight > 0.
+    """
+    if diversity_weight <= 0.0 or len(adv_texts) <= 1:
+        return batch_rewards, 0.0
+    encoder = _get_diversity_encoder()
+    embeddings = encoder.encode(
+        adv_texts, convert_to_tensor=True, device="cpu", normalize_embeddings=True
+    )
+    # Already L2-normalised → cosine similarity = dot product.
+    sim_matrix = torch.mm(embeddings.float(), embeddings.float().T)  # (n, n)
+    n = sim_matrix.size(0)
+    off_diag_mask = (torch.ones(n, n) - torch.eye(n)).to(sim_matrix)
+    avg_sim = (sim_matrix * off_diag_mask).sum(dim=1) / (n - 1)     # (n,)
+    bonuses = ((1.0 - avg_sim) * diversity_weight).tolist()
+    return [r + b for r, b in zip(batch_rewards, bonuses)], float(sum(bonuses) / n)
 
 
 def parse_args(defaults: dict[str, Any]) -> argparse.Namespace:
@@ -647,6 +686,24 @@ def parse_args(defaults: dict[str, Any]) -> argparse.Namespace:
         type=float,
         default=run_defaults.get("kl_coeff", 0.05),
         help="KL divergence penalty coefficient for RLOO (0.0 disables).",
+    )
+    parser.add_argument(
+        "--diversity-weight",
+        type=float,
+        default=run_defaults.get("diversity_weight", 0.3),
+        help=(
+            "Weight for intra-batch diversity bonus: (1 - avg_cosine_sim) * w added to each "
+            "sample's reward. Uses all-MiniLM-L6-v2 sentence embeddings. 0.0 disables."
+        ),
+    )
+    parser.add_argument(
+        "--grad-accum-steps",
+        type=int,
+        default=run_defaults.get("grad_accum_steps", 4),
+        help=(
+            "Gradient accumulation steps for RLOO: optimizer.step() fires every N iterations. "
+            "Effective batch size = adversary_reinforce_batch_size * grad_accum_steps."
+        ),
     )
     args = parser.parse_args()
     if args.rs_min_successes > 0 and args.adversary_policy == "rloo":
@@ -844,6 +901,9 @@ def main() -> None:
                 raise RuntimeError("Tokenizer has no pad_token_id or eos_token_id for batch padding.")
             padded_ids, valid_lens = pad_gen_ids_batch(batch_gen_ids, int(pad_id))
             device_t = padded_ids.device
+            batch_rewards, mean_diversity_bonus = _apply_diversity_bonus(
+                batch_rewards, adv_texts, args.diversity_weight
+            )
             rewards_t = torch.tensor(batch_rewards, dtype=torch.float32, device=device_t)
 
             if use_rs:
@@ -858,6 +918,9 @@ def main() -> None:
                 if loss_val is None:
                     loss_val = float("nan")
             elif args.adversary_policy == "rloo":
+                # Zero gradients at the start of each accumulation cycle.
+                if iteration % args.grad_accum_steps == 0:
+                    optimizer.zero_grad(set_to_none=True)
                 ref_lp_sums = None
                 if args.kl_coeff > 0.0:
                     ref_lp_sums = _compute_ref_log_prob_sums(
@@ -872,7 +935,16 @@ def main() -> None:
                     valid_seq_lens=valid_lens,
                     ref_log_prob_sums=ref_lp_sums,
                     kl_coeff=args.kl_coeff,
+                    zero_grad=False,
+                    optimizer_step=False,
+                    loss_scale=1.0 / args.grad_accum_steps,
                 )
+                # Step at the end of each accumulation cycle and on the final iteration.
+                _end_of_cycle = (iteration + 1) % args.grad_accum_steps == 0
+                _final_iter = iteration == train_cfg.iterations - 1
+                if _end_of_cycle or _final_iter:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                    optimizer.step()
             else:
                 loss_val, _ = reinforce_update_batch_sgd(
                     model=model,
@@ -924,6 +996,9 @@ def main() -> None:
                     "eval_refusal_rate": eval_refusal_rate,
                     "length_penalty_weight": train_cfg.length_penalty_weight,
                     "kl_coeff": args.kl_coeff,
+                    "diversity_weight": args.diversity_weight,
+                    "mean_diversity_bonus": mean_diversity_bonus,
+                    "grad_accum_steps": args.grad_accum_steps,
                     "mean_completion_tokens": sum(
                         g.shape[-1] - p for g, p in zip(batch_gen_ids, batch_prompt_lens)
                     ) / max(len(batch_gen_ids), 1),

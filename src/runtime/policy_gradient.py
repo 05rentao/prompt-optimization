@@ -87,8 +87,16 @@ def rloo_update_batch_sgd(
     valid_seq_lens: list[int] | None = None,
     ref_log_prob_sums: torch.Tensor | None = None,
     kl_coeff: float = 0.0,
+    zero_grad: bool = True,
+    optimizer_step: bool = True,
+    loss_scale: float = 1.0,
 ) -> tuple[float, Any]:
-    """RLOO policy-gradient step (leave-one-out baseline over batch rewards)."""
+    """RLOO policy-gradient step (leave-one-out baseline over batch rewards).
+
+    When used with gradient accumulation, callers should set zero_grad=False,
+    optimizer_step=False, and loss_scale=1/grad_accum_steps, then manage
+    zero_grad, clip_grad_norm_, and optimizer.step() externally.
+    """
 
     model.train()
     if valid_seq_lens is None:
@@ -124,9 +132,13 @@ def rloo_update_batch_sgd(
     if ref_log_prob_sums is not None and kl_coeff > 0.0:
         kl_per_sample = logprob_sums - ref_log_prob_sums.to(logprob_sums.device)
         loss = loss + kl_coeff * kl_per_sample.mean()
-    optimizer.zero_grad(set_to_none=True)
+    if loss_scale != 1.0:
+        loss = loss * loss_scale
+    if zero_grad:
+        optimizer.zero_grad(set_to_none=True)
     loss.backward()
-    optimizer.step()
+    if optimizer_step:
+        optimizer.step()
     return float(loss.detach().cpu()), logprob_sums.detach()
 
 

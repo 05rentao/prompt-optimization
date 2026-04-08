@@ -24,6 +24,10 @@ tqdm>=4.65.0
 PyYAML>=6.0
 scikit-learn>=1.3.0
 
+# ── Diversity penalty ───────────────────────────────────────────────────────
+# sentence-transformers: all-MiniLM-L6-v2 for pairwise cosine similarity within adversary batches.
+sentence-transformers>=2.2.0
+
 # ── LLM clients / prompt optimization ──────────────────────────────────────
 # openai: used as vLLM OpenAI-compatible client (OpenAI v1 SDK required).
 openai>=1.0.0
