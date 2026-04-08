@@ -48,7 +48,7 @@ class OpenAIChatTargetRuntime(TargetRuntime):
 
     def __init__(self, cfg: OpenAITargetConfig) -> None:
         self._cfg = cfg
-        self._client = OpenAI(base_url=cfg.base_url, api_key=cfg.api_key)
+        self._client = OpenAI(base_url=cfg.base_url, api_key=cfg.api_key, timeout=60.0)
 
     def generate(self, request: GenerationRequest, device: str) -> str:
         """Map a normalized request to OpenAI chat; ``device`` is ignored (no local weights)."""
@@ -111,7 +111,7 @@ class OpenAIReflectionGateway(ReflectionGateway):
     def __init__(self, cfg: OpenAIReflectionConfig) -> None:
         """Create a client for an OpenAI-compatible base URL."""
         self.cfg = cfg
-        self.client = OpenAI(base_url=cfg.base_url, api_key=cfg.api_key)
+        self.client = OpenAI(base_url=cfg.base_url, api_key=cfg.api_key, timeout=60.0)
 
     def verify(self, reflection_model_name: str) -> None:
         """Validate the OpenAI-compatible server with one chat completion on ``reflection_model_name``.

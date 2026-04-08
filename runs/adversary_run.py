@@ -705,6 +705,15 @@ def parse_args(defaults: dict[str, Any]) -> argparse.Namespace:
             "Effective batch size = adversary_reinforce_batch_size * grad_accum_steps."
         ),
     )
+    parser.add_argument(
+        "--skip-baseline-eval",
+        action="store_true",
+        default=False,
+        help=(
+            "Skip the baseline eval pass and use zeroed placeholder metrics. "
+            "Use when the untrained ASR is already known to save ~40 minutes per run."
+        ),
+    )
     args = parser.parse_args()
     if args.rs_min_successes > 0 and args.adversary_policy == "rloo":
         parser.error(
@@ -798,16 +807,22 @@ def main() -> None:
     )
     eval_examples = [{"id": str(ex["id"]), "prompt": ex["prompt"]} for ex in _fixed_eval]
 
-    baseline_eval, baseline_rows, baseline_metrics = _eval_suite(
-        eval_examples,
-        args.attacker_instruction,
-        args.target_system_prompt,
-        train_cfg,
-        eval_cfg,
-        ctx,
-        args,
-    )
-    print("Baseline metrics:", baseline_metrics)
+    if args.skip_baseline_eval:
+        print("Skipping baseline eval (--skip-baseline-eval set).")
+        baseline_eval = EvaluationResult(refusal_rate=0.0, asr=0.0, n_samples=0)
+        baseline_rows = []
+        baseline_metrics = {"refusal_rate": 0.0, "asr": 0.0, "aggregate_score": 0.0, "latency_ms_mean": 0.0}
+    else:
+        baseline_eval, baseline_rows, baseline_metrics = _eval_suite(
+            eval_examples,
+            args.attacker_instruction,
+            args.target_system_prompt,
+            train_cfg,
+            eval_cfg,
+            ctx,
+            args,
+        )
+        print("Baseline metrics:", baseline_metrics)
 
     training_rows: list[dict[str, Any]] = []
     final_eval = baseline_eval
