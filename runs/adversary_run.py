@@ -1019,6 +1019,12 @@ def main() -> None:
                     ) / max(len(batch_gen_ids), 1),
                 }
             )
+            print(
+                f"Iter {iteration}/{train_cfg.iterations} | "
+                f"loss: {loss_val:.4f} | mean_r: {mean_r:.3f} | "
+                f"max_r: {max(batch_rewards):.3f} | "
+                f"policy: {args.adversary_policy}"
+            )
 
         final_eval, final_eval_rows, final_metrics = _eval_suite(
             eval_examples,
