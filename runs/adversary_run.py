@@ -18,6 +18,7 @@ if str(_REPO_ROOT) not in sys.path:
 
 import argparse
 import time
+import warnings
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
@@ -752,6 +753,7 @@ def main() -> None:
     elif args.mode == "train":
         args.adversary_model_id = args.adversary_train_model_id
     # else mode == "eval": keep adversary_model_id set by patch_run_args_from_config (larger eval model)
+    warnings.filterwarnings("ignore", message="Setting `pad_token_id`")
     sns.set_theme(style="whitegrid")
     run_defaults = defaults["runs"]["adversary"]
 
@@ -880,6 +882,8 @@ def main() -> None:
                             break
             else:
                 batch_size = max(1, int(args.adversary_reinforce_batch_size))
+                # Phase 1: generate all adversary outputs sequentially (GPU, cannot parallelize).
+                sampled_batch = []
                 for _ in range(batch_size):
                     sampled, _ = adversary_output(
                         prompt=prompt,
@@ -888,14 +892,28 @@ def main() -> None:
                         device=ctx.device,
                         max_new_tokens=train_cfg.max_new_tokens,
                     )
-                    adversary_text = sampled["completion_text"].strip()
-                    target_response, _ = target_generate(
-                        prompt=adversary_text,
-                        target_session=ctx.target_session,
-                        device=ctx.device,
-                        target_system_prompt=args.target_system_prompt,
+                    sampled_batch.append(sampled)
+
+                # Phase 2: fire all target requests in parallel (vLLM handles concurrent HTTP).
+                target_requests = [
+                    GenerationRequest(
+                        system_prompt=args.target_system_prompt,
+                        user_prompt=s["completion_text"].strip(),
                         max_new_tokens=train_cfg.target_max_new_tokens,
+                        temperature=0.0,
                     )
+                    for s in sampled_batch
+                ]
+                with ThreadPoolExecutor(max_workers=batch_size) as _pool:
+                    _futs = [
+                        _pool.submit(timed_target_generate, ctx.target_session, ctx.device, req)
+                        for req in target_requests
+                    ]
+                    target_results = [f.result() for f in _futs]
+
+                # Phase 3: collect rewards.
+                for sampled, req, (target_response, _) in zip(sampled_batch, target_requests, target_results):
+                    adversary_text = req.user_prompt
                     reward, verdict = reward_from_response(prompt, target_response, eval_cfg, ctx)
                     reward = shape_reward_with_length_penalty(
                         reward, sampled["gen_ids"], sampled["prompt_len"],
@@ -975,7 +993,7 @@ def main() -> None:
 
             eval_asr: float | str = ""
             eval_refusal_rate: float | str = ""
-            if iteration % train_cfg.eval_every == 0:
+            if iteration > 0 and iteration % train_cfg.eval_every == 0:
                 periodic_eval, _, periodic_metrics = _eval_suite(
                     eval_examples,
                     args.attacker_instruction,
