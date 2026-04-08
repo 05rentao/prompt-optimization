@@ -754,6 +754,8 @@ def main() -> None:
         args.adversary_model_id = args.adversary_train_model_id
     # else mode == "eval": keep adversary_model_id set by patch_run_args_from_config (larger eval model)
     warnings.filterwarnings("ignore", message="Setting `pad_token_id`")
+    import logging as _logging
+    _logging.getLogger("transformers.generation.utils").setLevel(_logging.ERROR)
     sns.set_theme(style="whitegrid")
     run_defaults = defaults["runs"]["adversary"]
 
