@@ -25,6 +25,7 @@ from typing import Any
 import pandas as pd
 import seaborn as sns
 import torch
+import torch.nn.functional as F
 
 from src.artifacts import (
     build_baseline_optimized_df,
@@ -500,6 +501,7 @@ def save_artifacts(
             "adversary_policy": getattr(args, "adversary_policy", "reinforce"),
             "rs_budget": getattr(args, "rs_budget", 5),
             "rs_min_successes": getattr(args, "rs_min_successes", 0),
+            "kl_coeff": getattr(args, "kl_coeff", 0.0),
         },
         config_snapshot=config_snapshot,
     )
@@ -515,6 +517,39 @@ def save_artifacts(
     if refusal_iter_path is not None:
         logged_paths.insert(-1, refusal_iter_path)
     log_saved_artifacts(logged_paths)
+
+
+def _compute_ref_log_prob_sums(
+    model: Any,
+    gen_ids: torch.Tensor,
+    prompt_lens: list[int],
+    valid_seq_lens: list[int],
+) -> torch.Tensor:
+    """Compute reference policy log-prob sums using the frozen base model (no adapters).
+
+    PEFT LoRA initialises B=0, so the base model forward is identical to the initial
+    policy forward. Disabling adapter layers avoids a second model copy and works with
+    4-bit BnB weights that cannot be safely deepcopied.
+    """
+    peft_model = model.model  # UnslothAdversaryRuntime.model → PeftModel
+    with torch.no_grad():
+        peft_model.disable_adapter_layers()
+        try:
+            ref_out = peft_model(input_ids=gen_ids, use_cache=False)
+        finally:
+            peft_model.enable_adapter_layers()
+    ref_lp = F.log_softmax(ref_out.logits[:, :-1, :], dim=-1)
+    ref_sums: list[torch.Tensor] = []
+    for i in range(gen_ids.size(0)):
+        pl, ve = int(prompt_lens[i]), int(valid_seq_lens[i])
+        comp_ids = gen_ids[i, pl:ve]
+        if comp_ids.numel() == 0:
+            ref_sums.append(torch.tensor(0.0, device=gen_ids.device))
+            continue
+        start = pl - 1
+        lp_slice = ref_lp[i, start : start + comp_ids.size(0), :]
+        ref_sums.append(torch.gather(lp_slice, -1, comp_ids.unsqueeze(-1)).squeeze(-1).sum())
+    return torch.stack(ref_sums)
 
 
 def parse_args(defaults: dict[str, Any]) -> argparse.Namespace:
@@ -606,6 +641,12 @@ def parse_args(defaults: dict[str, Any]) -> argparse.Namespace:
         type=int,
         default=run_defaults.get("length_penalty_min_tokens", 50),
         help="Minimum completion tokens for full length bonus.",
+    )
+    parser.add_argument(
+        "--kl-coeff",
+        type=float,
+        default=run_defaults.get("kl_coeff", 0.05),
+        help="KL divergence penalty coefficient for RLOO (0.0 disables).",
     )
     args = parser.parse_args()
     if args.rs_min_successes > 0 and args.adversary_policy == "rloo":
@@ -817,6 +858,11 @@ def main() -> None:
                 if loss_val is None:
                     loss_val = float("nan")
             elif args.adversary_policy == "rloo":
+                ref_lp_sums = None
+                if args.kl_coeff > 0.0:
+                    ref_lp_sums = _compute_ref_log_prob_sums(
+                        model, padded_ids, batch_prompt_lens, valid_lens
+                    )
                 loss_val, _ = rloo_update_batch_sgd(
                     model=model,
                     optimizer=optimizer,
@@ -824,6 +870,8 @@ def main() -> None:
                     prompt_lens=batch_prompt_lens,
                     rewards=rewards_t,
                     valid_seq_lens=valid_lens,
+                    ref_log_prob_sums=ref_lp_sums,
+                    kl_coeff=args.kl_coeff,
                 )
             else:
                 loss_val, _ = reinforce_update_batch_sgd(
@@ -875,6 +923,7 @@ def main() -> None:
                     "eval_asr": eval_asr,
                     "eval_refusal_rate": eval_refusal_rate,
                     "length_penalty_weight": train_cfg.length_penalty_weight,
+                    "kl_coeff": args.kl_coeff,
                     "mean_completion_tokens": sum(
                         g.shape[-1] - p for g, p in zip(batch_gen_ids, batch_prompt_lens)
                     ) / max(len(batch_gen_ids), 1),

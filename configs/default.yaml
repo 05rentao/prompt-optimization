@@ -156,6 +156,7 @@ runs:
     eval_slice_end: 120
     # REINFORCE: roll this many adversary→target trajectories per optimizer step (padded batch, mean loss).
     adversary_reinforce_batch_size: 4
+    kl_coeff: 0.05
     training_csv_name: "adversary_training_log.csv"
     eval_csv_name: "adversary_eval_outputs.csv"
   vector_steering_baseline:

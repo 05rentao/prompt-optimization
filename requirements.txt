@@ -1,0 +1,48 @@
+# ── Core ML / training ──────────────────────────────────────────────────────
+# torch: pin minor to avoid CUDA ABI mismatches; upgrade together with bitsandbytes.
+torch>=2.3.0
+# transformers: 4.40+ adds stable Qwen2.5 support and the BitsAndBytesConfig path used here.
+transformers>=4.40.0
+# peft: disable_adapter_layers / enable_adapter_layers used for KL reference policy.
+peft>=0.10.0
+# bitsandbytes: backend for BitsAndBytesConfig (4-bit NF4 quantization); not directly imported.
+bitsandbytes>=0.41.0
+# accelerate: required by transformers for device_map="auto"; not directly imported.
+accelerate>=0.25.0
+
+# ── Data ────────────────────────────────────────────────────────────────────
+datasets>=2.14.0
+pandas>=2.0.0
+numpy>=1.24.0
+
+# ── Visualization ───────────────────────────────────────────────────────────
+matplotlib>=3.7.0
+seaborn>=0.13.0
+
+# ── Utilities ───────────────────────────────────────────────────────────────
+tqdm>=4.65.0
+PyYAML>=6.0
+scikit-learn>=1.3.0
+
+# ── LLM clients / prompt optimization ──────────────────────────────────────
+# openai: used as vLLM OpenAI-compatible client (OpenAI v1 SDK required).
+openai>=1.0.0
+# gepa: GEPA prompt optimization library (pulls in litellm as a transitive dep).
+gepa>=0.1.0
+
+# ── vLLM inference server ───────────────────────────────────────────────────
+# Not imported by any client code — the project connects via HTTP (openai package).
+# Pin exact: vLLM's Python API and engine config change across minor versions.
+# Install only on the host running the vLLM server; safe to omit on client-only machines.
+vllm==0.16.0
+
+# ── Omitted from pyproject.toml (not imported in active code) ───────────────
+# unsloth         — model IDs reference the unsloth HuggingFace namespace but the
+#                   training stack uses raw peft + transformers + bitsandbytes.
+#                   Add back if you switch to unsloth's FastLanguageModel API.
+# unsloth-zoo     — unsloth transitive dep; omit together with unsloth.
+# hf-transfer     — optional HuggingFace download accelerator (not imported).
+#                   Set HF_HUB_ENABLE_HF_TRANSFER=1 and install if download speed matters.
+# requests        — not imported directly; pulled in as a transitive dep of openai/datasets.
+# litellm         — not imported directly; pulled in as a transitive dep of gepa.
+# python-dotenv   — only in adversary_optimizing.py (legacy/experimental script).

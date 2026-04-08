@@ -85,6 +85,8 @@ def rloo_update_batch_sgd(
     prompt_lens: list[int],
     rewards: torch.Tensor,
     valid_seq_lens: list[int] | None = None,
+    ref_log_prob_sums: torch.Tensor | None = None,
+    kl_coeff: float = 0.0,
 ) -> tuple[float, Any]:
     """RLOO policy-gradient step (leave-one-out baseline over batch rewards)."""
 
@@ -119,6 +121,9 @@ def rloo_update_batch_sgd(
         advantages = rewards
 
     loss = -(advantages.detach() * logprob_sums).mean()
+    if ref_log_prob_sums is not None and kl_coeff > 0.0:
+        kl_per_sample = logprob_sums - ref_log_prob_sums.to(logprob_sums.device)
+        loss = loss + kl_coeff * kl_per_sample.mean()
     optimizer.zero_grad(set_to_none=True)
     loss.backward()
     optimizer.step()
