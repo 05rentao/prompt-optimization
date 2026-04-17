@@ -21,7 +21,7 @@ runtime:
     base_url: "http://127.0.0.1:8001/v1"
     api_key: "EMPTY"
   legacy_target_vllm:
-    base_url: "http://127.0.0.1:8000/v1"
+    base_url: "hp://127.0.0.1:8000/v1"
     api_key: "EMPTY"
 
 shared_generation:
@@ -137,6 +137,9 @@ runs:
     weight_decay: 0.01
     max_metric_calls: 50
     eval_method: "judge"
+    # Adversary reward shaping (mirrors runs/adversary_run.py). 0.0 disables (backward compatible).
+    length_penalty_weight: 0.0
+    length_penalty_min_tokens: 50
   adversary:
     train_size: 100
     val_size: 20

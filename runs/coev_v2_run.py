@@ -170,6 +170,26 @@ def target_generate(
     return timed_target_generate(target_session, device, request)
 
 
+def shape_reward_with_length_penalty(
+    base_reward: float,
+    gen_ids: torch.Tensor,
+    prompt_len: int,
+    length_penalty_weight: float,
+    length_penalty_min_tokens: int,
+) -> float:
+    """Length-shaped reward: shaped = base * (1 - w) + length_ratio * w.
+
+    Duplicated from ``runs/adversary_run.py`` so CoEV v2 can apply the same R11
+    length-penalty scheme to per-rollout rewards inside the staged RL loop.
+    ``w <= 0`` short-circuits and returns ``base_reward`` unchanged (backward compatible).
+    """
+    if length_penalty_weight <= 0.0:
+        return base_reward
+    completion_tokens = gen_ids.shape[-1] - prompt_len
+    length_ratio = min(completion_tokens / max(length_penalty_min_tokens, 1), 1.0)
+    return base_reward * (1.0 - length_penalty_weight) + length_ratio * length_penalty_weight
+
+
 def multi_query_reward(
     *,
     behavior: str,
@@ -439,6 +459,9 @@ def save_artifacts(
             "target_queries": getattr(args, "target_queries", 1),
             "rs_budget": getattr(args, "rs_budget", 5),
             "rs_min_successes": getattr(args, "rs_min_successes", 0),
+            "length_penalty_weight": getattr(args, "length_penalty_weight", 0.0),
+            "length_penalty_min_tokens": getattr(args, "length_penalty_min_tokens", 50),
+            "skip_baseline_eval": getattr(args, "skip_baseline_eval", False),
         },
         "baseline_metrics": baseline_metrics,
         "optimized_metrics": optimized_metrics,
@@ -534,6 +557,9 @@ def save_artifacts(
             "target_queries": getattr(args, "target_queries", 1),
             "rs_budget": getattr(args, "rs_budget", 5),
             "rs_min_successes": getattr(args, "rs_min_successes", 0),
+            "length_penalty_weight": getattr(args, "length_penalty_weight", 0.0),
+            "length_penalty_min_tokens": getattr(args, "length_penalty_min_tokens", 50),
+            "skip_baseline_eval": getattr(args, "skip_baseline_eval", False),
         },
         config_snapshot=config_snapshot,
     )
@@ -660,6 +686,30 @@ def parse_args(defaults: dict[str, Any]) -> argparse.Namespace:
         help=(
             "Rejection sampling: stop after this many successes (reward>0.5), up to --rs-budget. "
             "0 disables rejection sampling (use batched REINFORCE/RLOO instead)."
+        ),
+    )
+    parser.add_argument(
+        "--length-penalty-weight",
+        type=float,
+        default=run_defaults.get("length_penalty_weight", 0.0),
+        help=(
+            "Weight for length-based reward shaping on adversary rollouts (0.0 disables). "
+            "Mirrors runs/adversary_run.py to match the R11 length-penalty scheme inside the CoEV loop."
+        ),
+    )
+    parser.add_argument(
+        "--length-penalty-min-tokens",
+        type=int,
+        default=run_defaults.get("length_penalty_min_tokens", 50),
+        help="Minimum completion tokens for full length bonus (saturation point).",
+    )
+    parser.add_argument(
+        "--skip-baseline-eval",
+        action="store_true",
+        default=False,
+        help=(
+            "Skip the pre-training baseline eval and use zeroed placeholder metrics. "
+            "Use when the untrained ASR is already known (e.g. reusing R11 baseline) to save ~40 minutes."
         ),
     )
     args = parser.parse_args()
@@ -828,13 +878,17 @@ def _run_training_and_finalize(
                             defense_prompt=defense_prompt,
                             max_new_tokens=args.max_new_tokens,
                         )
+                        shaped_reward = shape_reward_with_length_penalty(
+                            reward, sample["gen_ids"], sample["prompt_len"],
+                            args.length_penalty_weight, args.length_penalty_min_tokens,
+                        )
                         batch_gen_ids.append(sample["gen_ids"])
-                        batch_rewards.append(reward)
+                        batch_rewards.append(shaped_reward)
                         batch_prompt_lens.append(sample["prompt_len"])
                         adv_rewrites.append(adv_rewrite)
                         target_resps.append(target_resp)
                         verdicts.append(verdict)
-                        if reward > 0.5:
+                        if shaped_reward > 0.5:
                             n_successes_so_far += 1
                             if n_successes_so_far >= args.rs_min_successes:
                                 break
@@ -858,8 +912,12 @@ def _run_training_and_finalize(
                             defense_prompt=defense_prompt,
                             max_new_tokens=args.max_new_tokens,
                         )
+                        shaped_reward = shape_reward_with_length_penalty(
+                            reward, sample["gen_ids"], sample["prompt_len"],
+                            args.length_penalty_weight, args.length_penalty_min_tokens,
+                        )
                         batch_gen_ids.append(sample["gen_ids"])
-                        batch_rewards.append(reward)
+                        batch_rewards.append(shaped_reward)
                         batch_prompt_lens.append(sample["prompt_len"])
                         adv_rewrites.append(adv_rewrite)
                         target_resps.append(target_resp)
@@ -907,6 +965,9 @@ def _run_training_and_finalize(
 
                 mean_r = float(rewards_t.mean().item())
                 log_batch = len(batch_rewards)
+                mean_completion_tokens = sum(
+                    g.shape[-1] - p for g, p in zip(batch_gen_ids, batch_prompt_lens)
+                ) / max(len(batch_gen_ids), 1)
                 training_rows.append(
                     {
                         "stage": stage,
@@ -925,6 +986,9 @@ def _run_training_and_finalize(
                         "adversary_policy": args.adversary_policy,
                         "target_queries": tq,
                         "rejection_sampling": use_rs,
+                        "length_penalty_weight": args.length_penalty_weight,
+                        "length_penalty_min_tokens": args.length_penalty_min_tokens,
+                        "mean_completion_tokens": mean_completion_tokens,
                     }
                 )
 
@@ -1071,9 +1135,19 @@ def main() -> None:
     timer = Timer()
     attacker_instruction = resolved_initial_attacker
     defense_prompt = coev_cfg.initial_defense_prompt
-    with timer.section("evaluation"):
-        baseline_metrics, baseline_df = _eval_suite(ctx, eval_cfg, args, attacker_instruction, defense_prompt, eval_examples)
-    print("Baseline metrics:", baseline_metrics)
+    if args.skip_baseline_eval:
+        print("Skipping baseline eval (--skip-baseline-eval set).")
+        baseline_metrics = {
+            "refusal_rate": 0.0,
+            "asr": 0.0,
+            "aggregate_score": 0.0,
+            "latency_ms_mean": 0.0,
+        }
+        baseline_df = pd.DataFrame()
+    else:
+        with timer.section("evaluation"):
+            baseline_metrics, baseline_df = _eval_suite(ctx, eval_cfg, args, attacker_instruction, defense_prompt, eval_examples)
+        print("Baseline metrics:", baseline_metrics)
 
     if args.mode == "eval":
         _run_eval_only(
