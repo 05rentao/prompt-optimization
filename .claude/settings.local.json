@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git clone:*)",
+      "Bash(shopt -s dotglob)",
+      "Bash(mv /tmp/prompt-optimization-clone/* \"/c/Users/shivl/Music/prompt optimization/\")",
+      "Bash(mv /tmp/prompt-optimization-clone/.git \"/c/Users/shivl/Music/prompt optimization/\")",
+      "Bash(mv /tmp/prompt-optimization-clone/.gitignore \"/c/Users/shivl/Music/prompt optimization/\")",
+      "Bash(rm -rf /tmp/prompt-optimization-clone)",
+      "Bash(git -C \"/c/Users/shivl/Music/prompt optimization\" log --oneline -5)",
+      "Bash(python -c \"import yaml; d = yaml.safe_load\\(open\\(''configs/adversary_baseline_test.yaml''\\)\\); print\\(''OK -'', len\\(d[''shared_generation''][''seed_attacker_instruction'']\\), ''chars''\\); print\\(''runs.adversary keys:'', sorted\\(d[''runs''][''adversary''].keys\\(\\)\\)\\)\")",
+      "Bash(export PATH=\"$PATH:/c/Program Files/GitHub CLI\")",
+      "Bash(gh pr:*)",
+      "Bash(gh auth:*)",
+      "Bash(python -c \":*)",
+      "Bash(python3 -c \":*)",
+      "Bash(chmod +x \"/c/Users/shivl/Music/prompt optimization/scripts/run_all_remaining.sh\")",
+      "Bash(python -c ':*)",
+      "Bash(bash -n scripts/run_all_remaining.sh)",
+      "Bash(uv run:*)",
+      "Bash(python -c \"import peft; print\\('peft version:', peft.__version__\\)\")",
+      "Bash(pip show:*)",
+      "Bash(bash -n scripts/launch_unified_prime.sh)",
+      "Bash(chmod +x \"/c/Users/shivl/Music/prompt optimization/scripts/run_r12.sh\")",
+      "Bash(bash -n scripts/run_r12.sh)"
+    ]
+  }
+}

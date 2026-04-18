@@ -16,9 +16,11 @@ export PYTHONPATH="${PYTHONPATH:-}:."
 #   - coev_v2:        CoEV v2 REINFORCE + dual-role GEPA (runs/coev_v2_run.py)
 #   - coev_v2_rloo:   CoEV v2 RLOO + dual-role GEPA (same script, --adversary-policy rloo)
 #   - adversary:      adversary-only training (runs/adversary_run.py)
+#   - xstest:         XSTest over-refusal eval (runs/xstest_run.py)
+#   - baseline:       no-adversary HarmBench baseline (runs/baseline_run.py)
 #   (runs/coev_run.py legacy is not wired here.)
 
-MODE="${MODE:-gepa}"                         # gepa | coev_v2 | coev_v2_rloo | adversary
+MODE="${MODE:-gepa}"                         # gepa | coev_v2 | coev_v2_rloo | adversary | xstest | baseline
 
 REFLECTION_PORT="${REFLECTION_PORT:-8001}"
 
@@ -68,8 +70,8 @@ wait_for_port() {
   echo "${name} is up on :${port}"
 }
 
-if [[ "${MODE}" != "gepa" && "${MODE}" != "coev_v2" && "${MODE}" != "coev_v2_rloo" && "${MODE}" != "adversary" ]]; then
-  echo "Unsupported MODE=${MODE}. Expected one of: gepa, coev_v2, coev_v2_rloo, adversary"
+if [[ "${MODE}" != "gepa" && "${MODE}" != "coev_v2" && "${MODE}" != "coev_v2_rloo" && "${MODE}" != "adversary" && "${MODE}" != "xstest" && "${MODE}" != "baseline" ]]; then
+  echo "Unsupported MODE=${MODE}. Expected one of: gepa, coev_v2, coev_v2_rloo, adversary, xstest, baseline"
   exit 1
 fi
 

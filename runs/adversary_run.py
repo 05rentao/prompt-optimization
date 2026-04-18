@@ -43,6 +43,7 @@ from src.run_pipeline import (
     build_prompt_pool,
     compute_reward_and_verdict,
     maybe_save_adapters as maybe_save_adapters_common,
+    shape_reward_with_length_penalty,
     split_prompt_pool,
 )
 from src.runtime import (
@@ -63,6 +64,7 @@ from src.runtime import (
 )
 from src.runtime.defaults import build_config_snapshot, load_default_config
 from src.runtime.policy_gradient import (
+    compute_reference_log_probs,
     pad_gen_ids_batch,
     reinforce_update_batch_sgd,
     rejection_sampling_update_sgd,
@@ -93,6 +95,7 @@ class AdversaryTrainingConfig:
     eval_csv_name: str = "adversary_eval_outputs.csv"
     length_penalty_weight: float = 0.0
     length_penalty_min_tokens: int = 50
+    kl_coeff: float = 0.0  # R12: per-token KL penalty vs frozen base model (0.0 disables).
 
 
 @dataclass
@@ -158,28 +161,6 @@ def reward_from_response(
         eval_cfg=eval_cfg,
         judge_session=ctx.judge_session if eval_cfg.method == "judge" else None,
     )
-
-
-def shape_reward_with_length_penalty(
-    base_reward: float,
-    gen_ids: torch.Tensor,
-    prompt_len: int,
-    length_penalty_weight: float,
-    length_penalty_min_tokens: int,
-) -> float:
-    """Apply length-based reward shaping to discourage mode collapse to short outputs.
-
-    shaped = base_reward * (1 - w) + length_ratio * w
-
-    When w=0, returns base_reward unchanged (backward compatible).
-    Failed-but-long outputs receive a small positive signal; failed-but-short
-    outputs receive near-zero. This counteracts the shortening bias in REINFORCE/RLOO.
-    """
-    if length_penalty_weight <= 0.0:
-        return base_reward
-    completion_tokens = gen_ids.shape[-1] - prompt_len
-    length_ratio = min(completion_tokens / max(length_penalty_min_tokens, 1), 1.0)
-    return base_reward * (1.0 - length_penalty_weight) + length_ratio * length_penalty_weight
 
 
 def _evaluation_result_to_metrics(ev: EvaluationResult, latency_ms_mean: float) -> dict[str, float]:
@@ -387,6 +368,7 @@ def save_artifacts(
             "adversary_policy": getattr(args, "adversary_policy", "reinforce"),
             "rs_budget": getattr(args, "rs_budget", 5),
             "rs_min_successes": getattr(args, "rs_min_successes", 0),
+            "kl_coeff": float(getattr(args, "kl_coeff", 0.0)),
         },
         "baseline_metrics": baseline_metrics,
         "final_metrics": final_metrics,
@@ -562,6 +544,15 @@ def parse_args(defaults: dict[str, Any]) -> argparse.Namespace:
         default=run_defaults.get("length_penalty_min_tokens", 50),
         help="Minimum completion tokens for full length bonus.",
     )
+    parser.add_argument(
+        "--kl-coeff",
+        type=float,
+        default=run_defaults.get("kl_coeff", 0.0),
+        help=(
+            "R12: coefficient on per-token KL(policy||base) at sampled tokens. "
+            "0.0 disables KL penalty. Typical range 0.02-0.1."
+        ),
+    )
     args = parser.parse_args()
     if args.rs_min_successes > 0 and args.adversary_policy == "rloo":
         parser.error(
@@ -611,6 +602,7 @@ def main() -> None:
         eval_csv_name=run_defaults["eval_csv_name"],
         length_penalty_weight=float(run_defaults.get("length_penalty_weight", 0.0)),
         length_penalty_min_tokens=int(run_defaults.get("length_penalty_min_tokens", 50)),
+        kl_coeff=float(run_defaults.get("kl_coeff", 0.0)),
     )
 
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -747,6 +739,18 @@ def main() -> None:
             device_t = padded_ids.device
             rewards_t = torch.tensor(batch_rewards, dtype=torch.float32, device=device_t)
 
+            # R12: compute frozen-base logprobs once per optimizer step. Cheap-ish
+            # (one extra forward pass with LoRA disabled; skipped when KL is off).
+            # Rejection sampling intentionally does NOT receive the KL term.
+            ref_log_probs = None
+            if train_cfg.kl_coeff > 0.0 and not use_rs:
+                ref_log_probs = compute_reference_log_probs(
+                    model=model,
+                    input_ids=padded_ids,
+                    response_start_positions=batch_prompt_lens,
+                )
+
+            kl_value = 0.0
             if use_rs:
                 loss_val, _n_used = rejection_sampling_update_sgd(
                     model=model,
@@ -759,22 +763,26 @@ def main() -> None:
                 if loss_val is None:
                     loss_val = float("nan")
             elif args.adversary_policy == "rloo":
-                loss_val, _ = rloo_update_batch_sgd(
+                loss_val, _, kl_value = rloo_update_batch_sgd(
                     model=model,
                     optimizer=optimizer,
                     gen_ids=padded_ids,
                     prompt_lens=batch_prompt_lens,
                     rewards=rewards_t,
                     valid_seq_lens=valid_lens,
+                    ref_log_probs=ref_log_probs,
+                    kl_coeff=train_cfg.kl_coeff,
                 )
             else:
-                loss_val, _ = reinforce_update_batch_sgd(
+                loss_val, _, kl_value = reinforce_update_batch_sgd(
                     model=model,
                     optimizer=optimizer,
                     gen_ids=padded_ids,
                     prompt_lens=batch_prompt_lens,
                     rewards=rewards_t,
                     valid_seq_lens=valid_lens,
+                    ref_log_probs=ref_log_probs,
+                    kl_coeff=train_cfg.kl_coeff,
                 )
 
             mean_r = float(rewards_t.mean().item())
@@ -817,6 +825,8 @@ def main() -> None:
                     "eval_asr": eval_asr,
                     "eval_refusal_rate": eval_refusal_rate,
                     "length_penalty_weight": train_cfg.length_penalty_weight,
+                    "kl_coeff": train_cfg.kl_coeff,
+                    "kl_divergence": kl_value,
                     "mean_completion_tokens": sum(
                         g.shape[-1] - p for g, p in zip(batch_gen_ids, batch_prompt_lens)
                     ) / max(len(batch_gen_ids), 1),

@@ -254,3 +254,30 @@ class UnslothAdversaryRuntime(LoRABridge):
         save_dir.mkdir(parents=True, exist_ok=True)
         self.model.save_pretrained(str(save_dir))
         self.tokenizer.save_pretrained(str(save_dir))
+
+    def load_adapters(self, adapter_dir: Path, *, adapter_name: str = "trained") -> None:
+        """Load LoRA adapter weights from a directory and activate them.
+
+        Pairs with :meth:`save_adapters`. Loads the saved adapter under
+        ``adapter_name`` via PEFT's ``load_adapter`` and activates it with
+        ``set_adapter``. The initial "default" adapter from construction is
+        left in place but inactive.
+
+        Verified against peft 0.18.1 (pinned in pyproject.toml):
+          PeftModel.load_adapter(model_id, adapter_name, is_trainable=False, ...)
+          PeftModel.set_adapter(adapter_name)
+        ``model_id`` accepts a local directory path (os.PathLike), so passing
+        a filesystem path that contains ``adapter_config.json`` works without
+        constructing a PeftConfig object. ``adapter_name`` must be unique vs.
+        any already-loaded adapter (the base runtime loads the initial
+        adapter as "default"), which is why we default to ``"trained"``.
+
+        Used by evaluation-only runners (e.g. ``runs/xstest_run.py``) to
+        evaluate a trained checkpoint without re-running training.
+        """
+        path = Path(adapter_dir).resolve()
+        if not path.exists():
+            raise FileNotFoundError(f"Adapter directory not found: {path}")
+        self.model.load_adapter(str(path), adapter_name=adapter_name)
+        self.model.set_adapter(adapter_name)
+        self.model.eval()

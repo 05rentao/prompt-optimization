@@ -25,6 +25,8 @@ from src.runtime.defaults import load_default_config
 GEPA_SCRIPT = REPO_ROOT / "runs" / "gepa_run.py"
 COEV_V2_SCRIPT = REPO_ROOT / "runs" / "coev_v2_run.py"
 ADVERSARY_SCRIPT = REPO_ROOT / "runs" / "adversary_run.py"
+XSTEST_SCRIPT = REPO_ROOT / "runs" / "xstest_run.py"
+BASELINE_SCRIPT = REPO_ROOT / "runs" / "baseline_run.py"
 
 
 def _resolve_orchestration(defaults: dict[str, Any]) -> dict[str, Any]:
@@ -51,8 +53,14 @@ def _resolve_orchestration(defaults: dict[str, Any]) -> dict[str, Any]:
     coev_v2_results_dir = u.get("coev_v2_results_dir", "results/coev_v2")
     coev_v2_rloo_results_dir = u.get("coev_v2_rloo_results_dir", "results/coev_v2_rloo")
     adversary_results_dir = u.get("adversary_results_dir", "results/adversary")
+    xstest_results_dir = u.get("xstest_results_dir", "results/xstest")
+    baseline_results_dir = u.get("baseline_results_dir", "results/baseline")
 
     save_dir = u.get("save_dir")
+
+    # xstest orchestration — read ``scripts.unified_runner.xstest_*`` with safe fallbacks.
+    xstest_mode = u.get("xstest_mode", "target-only")  # target-only | adversary
+    xstest_checkpoint_dir = u.get("xstest_checkpoint_dir")
 
     device = defaults["global"].get("device")
 
@@ -64,6 +72,10 @@ def _resolve_orchestration(defaults: dict[str, Any]) -> dict[str, Any]:
         "coev_v2_results_dir": coev_v2_results_dir,
         "coev_v2_rloo_results_dir": coev_v2_rloo_results_dir,
         "adversary_results_dir": adversary_results_dir,
+        "xstest_results_dir": xstest_results_dir,
+        "baseline_results_dir": baseline_results_dir,
+        "xstest_mode": xstest_mode,
+        "xstest_checkpoint_dir": xstest_checkpoint_dir,
         "save_dir": save_dir,
         "device": device,
     }
@@ -73,7 +85,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Unified CoEV/GEPA experiment runner.")
     parser.add_argument(
         "--mode",
-        choices=["gepa", "coev_v2", "coev_v2_rloo", "adversary"],
+        choices=["gepa", "coev_v2", "coev_v2_rloo", "adversary", "xstest", "baseline"],
         required=True,
     )
     return parser.parse_args()
@@ -141,6 +153,34 @@ def build_adversary_command(o: dict[str, Any]) -> list[str]:
     return cmd
 
 
+def build_xstest_command(o: dict[str, Any]) -> list[str]:
+    cmd: list[str] = [
+        sys.executable,
+        str(XSTEST_SCRIPT),
+        "--mode",
+        o["xstest_mode"],
+        "--results-dir",
+        o["xstest_results_dir"],
+    ]
+    if o["device"]:
+        cmd.extend(["--device", str(o["device"])])
+    if o.get("xstest_checkpoint_dir"):
+        cmd.extend(["--checkpoint-dir", str(o["xstest_checkpoint_dir"])])
+    return cmd
+
+
+def build_baseline_command(o: dict[str, Any]) -> list[str]:
+    cmd: list[str] = [
+        sys.executable,
+        str(BASELINE_SCRIPT),
+        "--results-dir",
+        o["baseline_results_dir"],
+    ]
+    if o["device"]:
+        cmd.extend(["--device", str(o["device"])])
+    return cmd
+
+
 def main() -> None:
     args = parse_args()
     defaults = load_default_config()
@@ -160,6 +200,14 @@ def main() -> None:
 
     if args.mode == "adversary":
         run_command(build_adversary_command(o))
+        return
+
+    if args.mode == "xstest":
+        run_command(build_xstest_command(o))
+        return
+
+    if args.mode == "baseline":
+        run_command(build_baseline_command(o))
 
 
 if __name__ == "__main__":

@@ -10,6 +10,8 @@ import time
 from pathlib import Path
 from typing import Any, Sequence
 
+import torch
+
 from src.evaluators import compute_refusal_score, is_yes_verdict
 from src.runtime import EvaluationConfig, GenerationSession
 
@@ -89,6 +91,32 @@ def compute_reward_and_verdict(
     refusal_score = compute_refusal_score(generation, eval_cfg.refusal_patterns)
     success = (1.0 - refusal_score) > eval_cfg.asr_threshold
     return (1.0 if success else 0.0), ("Yes" if success else "No")
+
+
+def shape_reward_with_length_penalty(
+    base_reward: float,
+    gen_ids: torch.Tensor,
+    prompt_len: int,
+    length_penalty_weight: float,
+    length_penalty_min_tokens: int,
+) -> float:
+    """Apply length-based reward shaping to discourage mode collapse to short outputs.
+
+    shaped = base_reward * (1 - w) + length_ratio * w
+
+    When ``length_penalty_weight == 0`` the function returns ``base_reward``
+    unchanged (backward compatible). Failed-but-long outputs receive a small
+    positive signal; failed-but-short outputs receive near-zero. This
+    counteracts the shortening bias in REINFORCE / RLOO.
+
+    Shared between ``runs/adversary_run.py`` and ``runs/coev_v2_run.py`` so
+    R11 (adversary-only) and R14 (co-evolution) use identical reward shaping.
+    """
+    if length_penalty_weight <= 0.0:
+        return base_reward
+    completion_tokens = gen_ids.shape[-1] - prompt_len
+    length_ratio = min(completion_tokens / max(length_penalty_min_tokens, 1), 1.0)
+    return base_reward * (1.0 - length_penalty_weight) + length_ratio * length_penalty_weight
 
 
 def maybe_save_adapters(

@@ -44,6 +44,7 @@ from src.run_pipeline import (
     build_prompt_pool,
     compute_reward_and_verdict,
     maybe_save_adapters as maybe_save_adapters_common,
+    shape_reward_with_length_penalty,
     split_prompt_pool,
 )
 from src.runtime import (
@@ -71,6 +72,7 @@ from src.runtime.gepa_prompt_optimization import (
     run_dual_role_gepa_prompt_optimization,
 )
 from src.runtime.policy_gradient import (
+    compute_reference_log_probs,
     pad_gen_ids_batch,
     reinforce_update_batch_sgd,
     rejection_sampling_update_sgd,
@@ -437,6 +439,9 @@ def save_artifacts(
             "target_queries": getattr(args, "target_queries", 1),
             "rs_budget": getattr(args, "rs_budget", 5),
             "rs_min_successes": getattr(args, "rs_min_successes", 0),
+            "length_penalty_weight": float(getattr(args, "length_penalty_weight", 0.0)),
+            "length_penalty_min_tokens": int(getattr(args, "length_penalty_min_tokens", 50)),
+            "kl_coeff": float(getattr(args, "kl_coeff", 0.0)),
         },
         "baseline_metrics": baseline_metrics,
         "optimized_metrics": optimized_metrics,
@@ -651,6 +656,30 @@ def parse_args(defaults: dict[str, Any]) -> argparse.Namespace:
             "0 disables rejection sampling (use batched REINFORCE/RLOO instead)."
         ),
     )
+    # Length penalty reward shaping — same helper as runs/adversary_run.py so
+    # R14 (co-evolution) uses identical shaping to R11 (adversary-only).
+    parser.add_argument(
+        "--length-penalty-weight",
+        type=float,
+        default=run_defaults.get("length_penalty_weight", 0.0),
+        help="Weight for length-based reward shaping (0.0 disables).",
+    )
+    parser.add_argument(
+        "--length-penalty-min-tokens",
+        type=int,
+        default=run_defaults.get("length_penalty_min_tokens", 50),
+        help="Minimum completion tokens for full length bonus.",
+    )
+    parser.add_argument(
+        "--kl-coeff",
+        type=float,
+        default=run_defaults.get("kl_coeff", 0.0),
+        help=(
+            "R12: coefficient on per-token KL(policy||base) at sampled tokens for "
+            "REINFORCE/RLOO adversary updates (0.0 disables). Rejection-sampling "
+            "updates do not receive the KL term."
+        ),
+    )
     args = parser.parse_args()
     if args.rs_min_successes > 0 and args.adversary_policy == "rloo":
         parser.error(
@@ -787,6 +816,12 @@ def _run_training_and_finalize(
             target_resps: list[str] = []
             verdicts: list[str] = []
 
+            # Length penalty reward shaping applied here to match adversary_run.py / R11 config.
+            # Shaping happens immediately after each base reward is computed so the logged
+            # batch_rewards / max_reward values reflect the signal the optimizer actually sees.
+            # Track pre-shaping rewards for logging parity with adversary_run.py ("reward" in the
+            # training CSV is the mean post-shaping reward the optimizer saw).
+            batch_base_rewards: list[float] = []
             if use_rs:
                 n_successes_so_far = 0
                 rs_budget = max(1, int(args.rs_budget))
@@ -808,13 +843,24 @@ def _run_training_and_finalize(
                         defense_prompt=defense_prompt,
                         max_new_tokens=args.max_new_tokens,
                     )
+                    batch_base_rewards.append(reward)
+                    reward = shape_reward_with_length_penalty(
+                        reward,
+                        sample["gen_ids"],
+                        sample["prompt_len"],
+                        args.length_penalty_weight,
+                        args.length_penalty_min_tokens,
+                    )
                     batch_gen_ids.append(sample["gen_ids"])
                     batch_rewards.append(reward)
                     batch_prompt_lens.append(sample["prompt_len"])
                     adv_rewrites.append(adv_rewrite)
                     target_resps.append(target_resp)
                     verdicts.append(verdict)
-                    if reward > 0.5:
+                    # Early-stop check uses the pre-shaping (task) reward so rejection
+                    # sampling still counts "real" successes (judge-positive outputs)
+                    # rather than ones that happen to be long.
+                    if batch_base_rewards[-1] > 0.5:
                         n_successes_so_far += 1
                         if n_successes_so_far >= args.rs_min_successes:
                             break
@@ -838,6 +884,14 @@ def _run_training_and_finalize(
                         defense_prompt=defense_prompt,
                         max_new_tokens=args.max_new_tokens,
                     )
+                    batch_base_rewards.append(reward)
+                    reward = shape_reward_with_length_penalty(
+                        reward,
+                        sample["gen_ids"],
+                        sample["prompt_len"],
+                        args.length_penalty_weight,
+                        args.length_penalty_min_tokens,
+                    )
                     batch_gen_ids.append(sample["gen_ids"])
                     batch_rewards.append(reward)
                     batch_prompt_lens.append(sample["prompt_len"])
@@ -855,6 +909,17 @@ def _run_training_and_finalize(
             device_t = padded_ids.device
             rewards_t = torch.tensor(batch_rewards, dtype=torch.float32, device=device_t)
 
+            # R12: frozen-base ref logprobs (LoRA disabled) for the KL penalty.
+            # Skipped when KL is off or when this step uses rejection sampling.
+            ref_log_probs = None
+            if args.kl_coeff > 0.0 and not use_rs:
+                ref_log_probs = compute_reference_log_probs(
+                    model=model,
+                    input_ids=padded_ids,
+                    response_start_positions=batch_prompt_lens,
+                )
+
+            kl_value = 0.0
             if use_rs:
                 loss_val, _n_used = rejection_sampling_update_sgd(
                     model,
@@ -867,25 +932,30 @@ def _run_training_and_finalize(
                 if loss_val is None:
                     loss_val = float("nan")
             elif args.adversary_policy == "rloo":
-                loss_val, _ = rloo_update_batch_sgd(
+                loss_val, _, kl_value = rloo_update_batch_sgd(
                     model,
                     optimizer,
                     padded_ids,
                     batch_prompt_lens,
                     rewards_t,
                     valid_seq_lens=valid_lens,
+                    ref_log_probs=ref_log_probs,
+                    kl_coeff=args.kl_coeff,
                 )
             else:
-                loss_val, _ = reinforce_update_batch_sgd(
+                loss_val, _, kl_value = reinforce_update_batch_sgd(
                     model,
                     optimizer,
                     padded_ids,
                     batch_prompt_lens,
                     rewards_t,
                     valid_seq_lens=valid_lens,
+                    ref_log_probs=ref_log_probs,
+                    kl_coeff=args.kl_coeff,
                 )
 
             mean_r = float(rewards_t.mean().item())
+            mean_base_r = float(sum(batch_base_rewards) / max(len(batch_base_rewards), 1))
             log_batch = len(batch_rewards)
             training_rows.append(
                 {
@@ -898,6 +968,7 @@ def _run_training_and_finalize(
                     "adv_prompt": clean_text(adv_rewrites[0]),
                     "target_resp": clean_text(target_resps[0]),
                     "reward": mean_r,
+                    "reward_pre_shaping": mean_base_r,
                     "loss": loss_val,
                     "verdict": verdicts[0],
                     "max_reward": max(batch_rewards),
@@ -905,6 +976,13 @@ def _run_training_and_finalize(
                     "adversary_policy": args.adversary_policy,
                     "target_queries": tq,
                     "rejection_sampling": use_rs,
+                    "length_penalty_weight": args.length_penalty_weight,
+                    "length_penalty_min_tokens": args.length_penalty_min_tokens,
+                    "kl_coeff": args.kl_coeff,
+                    "kl_divergence": kl_value,
+                    "mean_completion_tokens": sum(
+                        int(g.shape[-1]) - int(p) for g, p in zip(batch_gen_ids, batch_prompt_lens)
+                    ) / max(len(batch_gen_ids), 1),
                 }
             )
 

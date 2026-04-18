@@ -45,14 +45,17 @@ class TestPolicyGradient(unittest.TestCase):
         gen_ids = torch.tensor([[10, 11, 20, 21]], dtype=torch.long)
         rewards = torch.tensor([1.0], dtype=torch.float32)
         pl = [2]
-        loss_r, _ = reinforce_update_batch_sgd(m, opt, gen_ids, pl, rewards, valid_seq_lens=[4])
+        # R12: reinforce/rloo now return (loss, logprob_sums, kl_value).
+        loss_r, _, kl_r = reinforce_update_batch_sgd(m, opt, gen_ids, pl, rewards, valid_seq_lens=[4])
         self.assertTrue(loss_r == loss_r and abs(loss_r) < 1e6)
+        self.assertEqual(kl_r, 0.0)  # no ref_log_probs / kl_coeff -> no KL applied
 
         gen_ids2 = torch.tensor([[10, 11, 20, 21], [10, 11, 22, 23]], dtype=torch.long)
         rewards2 = torch.tensor([1.0, 0.0], dtype=torch.float32)
         pl2 = [2, 2]
-        loss_l, _ = rloo_update_batch_sgd(m, opt, gen_ids2, pl2, rewards2, valid_seq_lens=[4, 4])
+        loss_l, _, kl_l = rloo_update_batch_sgd(m, opt, gen_ids2, pl2, rewards2, valid_seq_lens=[4, 4])
         self.assertTrue(loss_l == loss_l and abs(loss_l) < 1e6)
+        self.assertEqual(kl_l, 0.0)
 
     def test_rejection_sampling_skips_when_no_success(self) -> None:
         m = _ToyLM()
