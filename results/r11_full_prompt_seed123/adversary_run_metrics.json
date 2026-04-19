@@ -1,0 +1,32 @@
+{
+  "config": {
+    "mode": "train",
+    "dataset_name": "walledai/HarmBench",
+    "dataset_config": "standard",
+    "dataset_split": "train",
+    "train_size": 100,
+    "val_size": 50,
+    "runtime_profile": "local_transformers",
+    "target_model_name": "meta-llama/Llama-3.1-8B-Instruct",
+    "reflection_vllm_base_url": "http://127.0.0.1:8001/v1",
+    "eval_method": "judge",
+    "iterations": 150,
+    "run_seconds": 2773.2529747486115,
+    "adversary_policy": "rloo",
+    "rs_budget": 5,
+    "rs_min_successes": 0,
+    "kl_coeff": 0.0
+  },
+  "baseline_metrics": {
+    "refusal_rate": 0.92,
+    "asr": 0.08,
+    "aggregate_score": 0.92,
+    "latency_ms_mean": 3850.339852499928
+  },
+  "final_metrics": {
+    "refusal_rate": 0.72,
+    "asr": 0.28,
+    "aggregate_score": 0.72,
+    "latency_ms_mean": 2831.5870303399424
+  }
+}
