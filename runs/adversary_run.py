@@ -369,6 +369,11 @@ def save_artifacts(
             "rs_budget": getattr(args, "rs_budget", 5),
             "rs_min_successes": getattr(args, "rs_min_successes", 0),
             "kl_coeff": float(getattr(args, "kl_coeff", 0.0)),
+            "init_adversary_checkpoint": (
+                str(Path(args.init_adversary_checkpoint).resolve())
+                if getattr(args, "init_adversary_checkpoint", None)
+                else None
+            ),
         },
         "baseline_metrics": baseline_metrics,
         "final_metrics": final_metrics,
@@ -553,6 +558,18 @@ def parse_args(defaults: dict[str, Any]) -> argparse.Namespace:
             "0.0 disables KL penalty. Typical range 0.02-0.1."
         ),
     )
+    parser.add_argument(
+        "--init-adversary-checkpoint",
+        default=run_defaults.get("init_adversary_checkpoint"),
+        help=(
+            "Optional directory containing a pre-trained LoRA adapter. In "
+            "--mode train this warm-starts training from the checkpoint; in "
+            "--mode eval this is the only way to evaluate a trained adapter "
+            "(without it, --mode eval measures the untrained base LoRA). "
+            "Defaults to runs.adversary.init_adversary_checkpoint in the "
+            "active YAML (null = fresh/untrained adapter)."
+        ),
+    )
     args = parser.parse_args()
     if args.rs_min_successes > 0 and args.adversary_policy == "rloo":
         parser.error(
@@ -571,8 +588,26 @@ def _build_context(args: argparse.Namespace, defaults: dict[str, Any], device: s
         lora_alpha=model_cfg.lora_alpha,
         lora_dropout=model_cfg.lora_dropout,
     )
+    adversary_session = RuntimeCatalog.build_adversary_session(adversary_cfg)
+    # Optional: warm-start (train mode) or load-for-eval (eval mode) from a
+    # pre-trained LoRA checkpoint. Mirrors runs/coev_v2_run.py::_build_context
+    # and runs/xstest_run.py::_build_adversary_context. When unset, the fresh
+    # untrained "default" adapter attached by UnslothAdversaryRuntime stays
+    # active and --mode eval just measures the base model under the seed
+    # attacker instruction.
+    init_ckpt = getattr(args, "init_adversary_checkpoint", None)
+    if init_ckpt:
+        ckpt_path = Path(init_ckpt).resolve()
+        print(f"Loading adversary adapter from: {ckpt_path}")
+        runtime = adversary_session.runtime
+        if not hasattr(runtime, "load_adapters"):
+            raise RuntimeError(
+                "Adversary runtime does not expose load_adapters(); update src/runtime/local_runtimes.py."
+            )
+        runtime.load_adapters(ckpt_path)
+
     return RunContext(
-        adversary_session=RuntimeCatalog.build_adversary_session(adversary_cfg),
+        adversary_session=adversary_session,
         target_session=build_vllm_target_session(defaults),
         judge_session=RuntimeCatalog.build_judge_session(HarmbenchJudgeConfig()),
         device=device,
