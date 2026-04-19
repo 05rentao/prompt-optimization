@@ -1,0 +1,3 @@
+variant,refusal_rate,asr,aggregate_score,latency_ms_mean
+before_training,0.92,0.08,0.92,3850.339852499928
+after_training,0.72,0.28,0.72,2831.5870303399424
