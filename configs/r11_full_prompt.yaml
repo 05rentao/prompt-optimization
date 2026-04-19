@@ -98,7 +98,7 @@ runs:
     adversary_policy: rloo
     rs_budget: 5
     rs_min_successes: 0
-    iterations: 120
+    iterations: 150
     lr: 0.00005
     weight_decay: 0.01
     eval_every: 20
