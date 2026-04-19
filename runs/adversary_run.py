@@ -584,6 +584,13 @@ def main() -> None:
     run_start = time.time()
     defaults = load_default_config()
     args = parse_args(defaults)
+    # Seed torch early so per-iteration prompt sampling via ``torch.randint`` and
+    # the adversary ``model.generate(do_sample=True, ...)`` rollouts are
+    # reproducible across runs with the same ``global.seed``. Also seeds CUDA
+    # generators when available (multi-GPU safe no-op on CPU / single-GPU).
+    torch.manual_seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
     patch_run_args_from_config(defaults, args, run="adversary")
     sns.set_theme(style="whitegrid")
     run_defaults = defaults["runs"]["adversary"]
