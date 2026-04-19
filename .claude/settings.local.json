@@ -25,7 +25,13 @@
       "Bash(bash -n scripts/run_r12.sh)",
       "Bash(python -)",
       "Bash(python -c \"import yaml; d=yaml.safe_load\\(open\\('configs/r11_full_prompt.yaml'\\)\\); print\\('iterations =', d['runs']['adversary']['iterations']\\)\")",
-      "Bash(python audit_results.py)"
+      "Bash(python audit_results.py)",
+      "Bash(cp configs/r12_full_prompt_kl_xstest.yaml configs/r11_seed123_xstest.yaml)",
+      "Bash(cp configs/r12_full_prompt_kl_xstest.yaml configs/r14_coev_full_prompt_xstest.yaml)",
+      "Bash(chmod +x \"/c/Users/shivl/Music/prompt optimization/scripts/run_b200_overnight.sh\")",
+      "Bash(bash -n scripts/run_b200_overnight.sh)",
+      "Bash(cp configs/r14_coev_full_prompt.yaml configs/r14_coev_full_prompt_kl.yaml)",
+      "Bash(cp configs/r14_coev_full_prompt_xstest.yaml configs/r14_coev_full_prompt_kl_xstest.yaml)"
     ]
   }
 }

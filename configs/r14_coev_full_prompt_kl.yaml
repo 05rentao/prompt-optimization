@@ -1,25 +1,27 @@
-# R14 full-prompt — staged co-evolution with RLOO adversary + dual-role GEPA.
+# R14 full-prompt + KL — staged co-evolution with RLOO adversary + dual-role
+# GEPA + per-token KL penalty.
 #
-# Identical to configs/r14_coev_rloo.yaml except:
-#   - seed: 42 -> 123 (matches R11/R12 full-prompt seed=123 runs so the
-#     co-evolution result is comparable to the adversary-only ablations).
-#   - seed_attacker_instruction: 2262-char full version (with illustrative
-#     example frames + "first word" rule) replacing the condensed one used in
-#     configs/r14_coev_rloo.yaml.
-#   - results_dir: results/r14_coev_full_prompt
+# Identical to configs/r14_coev_full_prompt.yaml except:
+#   - runs.coev_v2.kl_coeff: 0.05 (R12-equivalent KL penalty on RLOO updates).
+#   - results_dir: results/r14_coev_full_prompt_kl
+#
+# Everything else (seed=123, 2262-char attacker instruction, length-penalty
+# weight=0.2 / min_tokens=50, stages=4 × iters_per_stage=15, adversary_policy
+# rloo) is byte-equal to configs/r14_coev_full_prompt.yaml, so this is a
+# clean single-knob ablation against that config: KL vs no-KL inside the
+# co-evolution loop.
 #
 # Runs runs/coev_v2_run.py via scripts/run_unified_experiment.py mode
-# coev_v2_rloo (which forces --adversary-policy rloo).
+# coev_v2_rloo (which forces --adversary-policy rloo). KL term is applied
+# only for RLOO/REINFORCE updates — rejection sampling is disabled here
+# (rs_min_successes: 0) so every step takes the RLOO path.
 #
-# Total adversary update steps = stages * iters_per_stage.
-# stages=4, iters_per_stage=15 -> 60 adversary RLOO steps, with dual-role
-# GEPA prompt-evolution inserted at the end of each of the 4 stages.
 # Best-checkpoint saving is wired in runs/coev_v2_run.py: the peak
 # stage-boundary eval ASR adapter lands under checkpoints_best/ and the
 # end-of-run adapter lands under checkpoints/.
 #
 # Usage:
-#   PROMPT_OPT_CONFIG_PATH=configs/r14_coev_full_prompt.yaml \
+#   PROMPT_OPT_CONFIG_PATH=configs/r14_coev_full_prompt_kl.yaml \
 #     MODE=coev_v2_rloo bash scripts/launch_unified_prime.sh
 
 global:
@@ -102,7 +104,7 @@ runs:
   coev_v2:
     train_size: 100
     val_size: 50
-    results_dir: "results/r14_coev_full_prompt"
+    results_dir: "results/r14_coev_full_prompt_kl"
     training_csv_name: "coev_v2_training_log.csv"
     # RLOO adversary policy (scripts/run_unified_experiment.py coev_v2_rloo
     # mode also passes --adversary-policy rloo on the CLI).
@@ -128,6 +130,9 @@ runs:
     # loop sees identical shaping to the adversary-only baseline.
     length_penalty_weight: 0.2
     length_penalty_min_tokens: 50
+    # R12-equivalent KL penalty inside the co-evolution loop. Applied only on
+    # RLOO/REINFORCE update steps (rs_min_successes: 0 here so RLOO is active).
+    kl_coeff: 0.05
     # Warm-start the adversary from R11's peak-ASR LoRA (seed=123) so the
     # first few stages don't re-learn what adversary-only training already
     # converged to. Set to null to start from the untrained base LoRA.
@@ -142,13 +147,13 @@ scripts:
     coev_v2_mode: coev
     coev_v2_rloo_mode: coev
     adversary_mode: train
-    # Final stage's adapters saved to results/r14_coev_full_prompt/checkpoints/
+    # Final stage's adapters saved to results/r14_coev_full_prompt_kl/checkpoints/
     # (coev_v2_run.py calls maybe_save_adapters only at end-of-run; stage-level
     # checkpointing is not wired today — see TODO in docs).
     save_dir: "checkpoints"
     gepa_results_dir: "results/gepa"
     coev_v2_results_dir: "results/coev_v2"
-    coev_v2_rloo_results_dir: "results/r14_coev_full_prompt"
+    coev_v2_rloo_results_dir: "results/r14_coev_full_prompt_kl"
     adversary_results_dir: "results/adversary"
     xstest_results_dir: "results/xstest"
     xstest_mode: target-only

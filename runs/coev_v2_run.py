@@ -442,6 +442,11 @@ def save_artifacts(
             "length_penalty_weight": float(getattr(args, "length_penalty_weight", 0.0)),
             "length_penalty_min_tokens": int(getattr(args, "length_penalty_min_tokens", 50)),
             "kl_coeff": float(getattr(args, "kl_coeff", 0.0)),
+            "init_adversary_checkpoint": (
+                str(Path(args.init_adversary_checkpoint).resolve())
+                if getattr(args, "init_adversary_checkpoint", None)
+                else None
+            ),
         },
         "baseline_metrics": baseline_metrics,
         "optimized_metrics": optimized_metrics,
@@ -680,6 +685,19 @@ def parse_args(defaults: dict[str, Any]) -> argparse.Namespace:
             "updates do not receive the KL term."
         ),
     )
+    parser.add_argument(
+        "--init-adversary-checkpoint",
+        default=run_defaults.get("init_adversary_checkpoint"),
+        help=(
+            "Optional directory containing a pre-trained LoRA adapter (e.g. "
+            "results/r11_full_prompt_seed123/checkpoints_best). When set, the "
+            "adapter is loaded into the adversary session before the stage loop "
+            "begins, so co-evolution continues training from an existing "
+            "checkpoint instead of the untrained base LoRA. Absolute or "
+            "repo-relative path. Defaults to runs.coev_v2.init_adversary_checkpoint "
+            "in the active YAML (null = start from scratch)."
+        ),
+    )
     args = parser.parse_args()
     if args.rs_min_successes > 0 and args.adversary_policy == "rloo":
         parser.error(
@@ -702,8 +720,24 @@ def _build_context(args: argparse.Namespace, defaults: dict[str, Any], device: s
     reflection_gateway.verify(args.reflection_model_name)
     print("Reflection model smoke output:", reflection_gateway.smoke_test(args.reflection_model_name))
 
+    adversary_session = RuntimeCatalog.build_adversary_session(adversary_cfg)
+    # Optional: warm-start the adversary from a pre-trained LoRA checkpoint
+    # (e.g. R11's checkpoints_best/) so co-evolution continues training from
+    # an already-effective attacker instead of the fresh base LoRA. Matches
+    # the checkpoint-loading path in runs/xstest_run.py::_build_adversary_context.
+    init_ckpt = getattr(args, "init_adversary_checkpoint", None)
+    if init_ckpt:
+        ckpt_path = Path(init_ckpt).resolve()
+        print(f"Loading adversary adapter from: {ckpt_path}")
+        runtime = adversary_session.runtime
+        if not hasattr(runtime, "load_adapters"):
+            raise RuntimeError(
+                "Adversary runtime does not expose load_adapters(); update src/runtime/local_runtimes.py."
+            )
+        runtime.load_adapters(ckpt_path)
+
     return RunContext(
-        adversary_session=RuntimeCatalog.build_adversary_session(adversary_cfg),
+        adversary_session=adversary_session,
         target_session=target_session,
         judge_session=RuntimeCatalog.build_judge_session(HarmbenchJudgeConfig()),
         reflection_gateway=reflection_gateway,
