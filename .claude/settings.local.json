@@ -24,7 +24,8 @@
       "Bash(chmod +x \"/c/Users/shivl/Music/prompt optimization/scripts/run_r12.sh\")",
       "Bash(bash -n scripts/run_r12.sh)",
       "Bash(python -)",
-      "Bash(python -c \"import yaml; d=yaml.safe_load\\(open\\('configs/r11_full_prompt.yaml'\\)\\); print\\('iterations =', d['runs']['adversary']['iterations']\\)\")"
+      "Bash(python -c \"import yaml; d=yaml.safe_load\\(open\\('configs/r11_full_prompt.yaml'\\)\\); print\\('iterations =', d['runs']['adversary']['iterations']\\)\")",
+      "Bash(python audit_results.py)"
     ]
   }
 }
