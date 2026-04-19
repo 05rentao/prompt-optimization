@@ -799,6 +799,20 @@ def _run_training_and_finalize(
     policy_label = "RLOO" if args.adversary_policy == "rloo" else "REINFORCE"
     rs_note = " + rejection sampling" if use_rs else ""
 
+    # Resolve results_dir up front so the best-checkpoint save inside the stage
+    # loop can reference it; the end-of-run _try_save_adapters_print call reuses
+    # the same path (the duplicate assignment below is removed).
+    results_dir = Path(args.results_dir).resolve()
+    results_dir.mkdir(parents=True, exist_ok=True)
+
+    # Best-checkpoint tracking: whenever a stage-boundary ``pre_evolution`` eval
+    # ASR beats the running max, save the adapter to ``checkpoints_best``. The
+    # weights captured are the adversary LoRA as of that stage's final training
+    # step — before GEPA prompt evolution — which is the state the ASR number
+    # was measured against.
+    best_stage_asr: float = -1.0
+    best_stage: int = -1
+
     print("Starting CoEV v2 training...")
     for stage in range(coev_cfg.stages):
         print(f"\n--- Stage {stage} start ---")
@@ -993,6 +1007,21 @@ def _run_training_and_finalize(
                 f"Stage {stage}: Completed {policy_label}{rs_note}. Eval ASR: {stage_metrics['asr']:.2%} | "
                 f"refusal_rate: {stage_metrics['refusal_rate']:.2%}"
             )
+            # Best-checkpoint save (pre-GEPA adversary weights at this stage boundary).
+            current_stage_asr = float(stage_metrics["asr"])
+            if current_stage_asr > best_stage_asr:
+                old_best = best_stage_asr
+                best_stage_asr = current_stage_asr
+                best_stage = stage
+                best_path = maybe_save_adapters_common(
+                    ctx.adversary_session, "checkpoints_best", results_dir=results_dir
+                )
+                print(
+                    f"New best eval ASR: {current_stage_asr:.3f} at stage {stage} "
+                    f"(previous best: {old_best:.3f})"
+                )
+                if best_path:
+                    print(f"Saved best-ASR adapters to: {best_path}")
         else:
             print(f"Stage {stage}: Completed {policy_label}{rs_note}.")
 
@@ -1046,8 +1075,13 @@ def _run_training_and_finalize(
 
     optimized_metrics, optimized_df = _eval_suite(ctx, eval_cfg, args, attacker_instruction, defense_prompt, eval_examples)
     print("Optimized metrics:", optimized_metrics)
+    if best_stage >= 0:
+        print(f"Best eval ASR: {best_stage_asr:.3f} at stage {best_stage}")
+    else:
+        print("Best eval ASR: no stage-boundary eval fired during training.")
 
-    results_dir = Path(args.results_dir).resolve()
+    # ``results_dir`` was resolved above the stage loop so the best-checkpoint
+    # save could use it; reuse the same resolved path here.
     _try_save_adapters_print(ctx, args.save_dir, results_dir)
 
     save_artifacts(

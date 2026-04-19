@@ -661,6 +661,12 @@ def main() -> None:
     if args.mode == "train":
         use_rs = args.rs_min_successes > 0
         rs_budget = max(1, int(args.rs_budget))
+        # Best-checkpoint tracking: whenever an eval-checkpoint ASR beats the
+        # running max, save the adapter to a separate ``checkpoints_best``
+        # directory. The end-of-run adapter still lands in ``checkpoints`` via
+        # the existing ``_try_save_adapters_print`` call.
+        best_eval_asr: float = -1.0
+        best_iteration: int = -1
         for iteration in range(train_cfg.iterations):
             idx = torch.randint(0, len(train_prompts), ()).item()
             prompt = train_prompts[idx]
@@ -822,6 +828,24 @@ def main() -> None:
                     Path(results_dir) / train_cfg.training_csv_name, index=False
                 )
 
+                # Best-checkpoint save. ``best_eval_asr`` starts at -1.0 so the
+                # very first eval always triggers a save — this gives us a
+                # baseline snapshot even if the model never improves.
+                current_eval_asr = float(periodic_eval.asr)
+                if current_eval_asr > best_eval_asr:
+                    old_best = best_eval_asr
+                    best_eval_asr = current_eval_asr
+                    best_iteration = iteration
+                    best_path = maybe_save_adapters_common(
+                        ctx.adversary_session, "checkpoints_best", results_dir=results_dir
+                    )
+                    print(
+                        f"New best eval ASR: {current_eval_asr:.3f} at iteration {iteration} "
+                        f"(previous best: {old_best:.3f})"
+                    )
+                    if best_path:
+                        print(f"Saved best-ASR adapters to: {best_path}")
+
             training_rows.append(
                 {
                     "iteration": iteration,
@@ -857,6 +881,10 @@ def main() -> None:
             args,
         )
         print("Final metrics:", final_metrics)
+        if best_iteration >= 0:
+            print(f"Best eval ASR: {best_eval_asr:.3f} at iteration {best_iteration}")
+        else:
+            print("Best eval ASR: no eval checkpoint fired during training.")
 
     # ``results_dir`` was hoisted above the training loop so the eval-checkpoint
     # CSV write can use it; reuse the same resolved path here.
