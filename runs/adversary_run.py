@@ -652,6 +652,12 @@ def main() -> None:
     model = ctx.adversary_session.runtime
     optimizer = torch.optim.AdamW(model.parameters(), lr=train_cfg.lr, weight_decay=train_cfg.weight_decay)
 
+    # Hoisted so the eval-checkpoint CSV write below can reference it. The
+    # duplicate assignment that used to live after the training loop is
+    # removed; save_artifacts still receives results_dir as an argument.
+    results_dir = Path(args.results_dir).resolve()
+    results_dir.mkdir(parents=True, exist_ok=True)
+
     if args.mode == "train":
         use_rs = args.rs_min_successes > 0
         rs_budget = max(1, int(args.rs_budget))
@@ -807,6 +813,14 @@ def main() -> None:
                     f"refusal_rate: {periodic_eval.refusal_rate:.3f} | "
                     f"latency_ms_mean: {periodic_metrics['latency_ms_mean']:.1f}"
                 )
+                # Flush training rows so partial progress survives a crash between
+                # eval checkpoints. The current iteration's row is appended below
+                # (line ~811), so this write captures iterations 0..iteration-1;
+                # the current row lands in the next checkpoint flush or the
+                # final save_artifacts write at end-of-run.
+                pd.DataFrame(training_rows).to_csv(
+                    Path(results_dir) / train_cfg.training_csv_name, index=False
+                )
 
             training_rows.append(
                 {
@@ -844,7 +858,8 @@ def main() -> None:
         )
         print("Final metrics:", final_metrics)
 
-    results_dir = Path(args.results_dir).resolve()
+    # ``results_dir`` was hoisted above the training loop so the eval-checkpoint
+    # CSV write can use it; reuse the same resolved path here.
     adapter_path = _try_save_adapters_print(ctx, args.save_dir, results_dir)
     run_seconds = time.time() - run_start
     baseline_df = pd.DataFrame(baseline_rows)

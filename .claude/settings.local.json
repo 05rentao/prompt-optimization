@@ -22,7 +22,8 @@
       "Bash(pip show:*)",
       "Bash(bash -n scripts/launch_unified_prime.sh)",
       "Bash(chmod +x \"/c/Users/shivl/Music/prompt optimization/scripts/run_r12.sh\")",
-      "Bash(bash -n scripts/run_r12.sh)"
+      "Bash(bash -n scripts/run_r12.sh)",
+      "Bash(python -)"
     ]
   }
 }
