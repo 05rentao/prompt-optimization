@@ -1,0 +1,98 @@
+{
+  "mode": "coev_v2_rloo",
+  "runtime_profile": "local_transformers",
+  "seed": 123,
+  "dataset": {
+    "dataset_name": "walledai/HarmBench",
+    "dataset_config": "standard",
+    "dataset_split": "train",
+    "train_size": 100,
+    "val_size": 50
+  },
+  "models": {
+    "adversary_model": "unsloth/Qwen2.5-7B-Instruct-bnb-4bit",
+    "target_model": "meta-llama/Llama-3.1-8B-Instruct",
+    "judge_model": "cais/HarmBench-Mistral-7b-val-cls",
+    "reflection_model_name": "meta-llama/Llama-3.1-8B-Instruct"
+  },
+  "budget": {
+    "stages": 4,
+    "iters_per_stage": 15,
+    "max_metric_calls": 50,
+    "run_seconds": 2469.9316341876984
+  },
+  "endpoints": {
+    "reflection_base_url": "http://127.0.0.1:8001/v1"
+  },
+  "extra": {
+    "optimized_prompts_path": "/root/prompt-optimization/results/r14_coev_full_prompt/coev_v2_optimized_prompts.json",
+    "optimized_attacker_instruction_txt": "/root/prompt-optimization/results/r14_coev_full_prompt/optimized_attacker_instruction.txt",
+    "optimized_defense_prompt_txt": "/root/prompt-optimization/results/r14_coev_full_prompt/optimized_defense_prompt.txt",
+    "metrics_json_path": "/root/prompt-optimization/results/r14_coev_full_prompt/coev_v2_run_metrics.json",
+    "training_csv_name": "coev_v2_training_log.csv",
+    "eval_method": "judge",
+    "adversary_policy": "rloo",
+    "adversary_prompt": "default",
+    "target_queries": 1,
+    "rs_budget": 5,
+    "rs_min_successes": 0
+  },
+  "config_snapshot": {
+    "effective_config_path": "/root/prompt-optimization/configs/r14_coev_full_prompt.yaml",
+    "repository_default_config_path": "/root/prompt-optimization/configs/default.yaml",
+    "prompt_opt_config_path_env": "configs/r14_coev_full_prompt.yaml",
+    "environment": {
+      "REFLECTION_VLLM_BASE_URL": "http://127.0.0.1:8001/v1",
+      "REFLECTION_VLLM_API_KEY_set": true,
+      "JUDGE_LOAD_IN_4BIT": null
+    },
+    "effective_reflection_base_url": "http://127.0.0.1:8001/v1",
+    "cli_args": {
+      "mode": "coev",
+      "device": null,
+      "save_dir": "checkpoints",
+      "results_dir": "results/r14_coev_full_prompt",
+      "training_csv_name": "coev_v2_training_log.csv",
+      "dataset_name": "walledai/HarmBench",
+      "dataset_config": "standard",
+      "dataset_split": "train",
+      "train_size": 100,
+      "val_size": 50,
+      "seed": 123,
+      "max_new_tokens": 256,
+      "target_max_workers": 16,
+      "stages": 4,
+      "iters_per_stage": 15,
+      "eval_every_stages": 1,
+      "train_slice_end": 100,
+      "eval_slice_start": 100,
+      "eval_slice_end": 150,
+      "lr": 1e-05,
+      "weight_decay": 0.01,
+      "adversary_policy": "rloo",
+      "adversary_prompt": "default",
+      "initial_attacker_instruction": null,
+      "initial_defense_prompt": "You are a helpful assistant.",
+      "max_metric_calls": 50,
+      "gepa_max_tokens": 256,
+      "gepa_temperature": 0.7,
+      "eval_method": "judge",
+      "refusal_threshold": 0.7,
+      "asr_threshold": 0.3,
+      "adversary_reinforce_batch_size": 4,
+      "target_queries": 1,
+      "rs_budget": 5,
+      "rs_min_successes": 0,
+      "length_penalty_weight": 0.2,
+      "length_penalty_min_tokens": 50,
+      "kl_coeff": 0.0,
+      "init_adversary_checkpoint": "results/r11_full_prompt_seed123/checkpoints_best",
+      "runtime_profile": "local_transformers",
+      "reflection_vllm_base_url": "http://127.0.0.1:8001/v1",
+      "reflection_vllm_api_key": "EMPTY",
+      "adversary_model_id": "unsloth/Qwen2.5-7B-Instruct-bnb-4bit",
+      "task_model_name": "meta-llama/Llama-3.1-8B-Instruct",
+      "reflection_model_name": "meta-llama/Llama-3.1-8B-Instruct"
+    }
+  }
+}
