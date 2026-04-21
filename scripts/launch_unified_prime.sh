@@ -30,6 +30,13 @@ REFLECTION_MODEL="${REFLECTION_MODEL:-meta-llama/Llama-3.1-8B-Instruct}"
 REFLECTION_GPU_UTIL="${REFLECTION_GPU_UTIL:-0.40}"
 REFLECTION_MAX_MODEL_LEN="${REFLECTION_MAX_MODEL_LEN:-8192}"
 
+# Optional: path to a Jinja chat template to pass to vLLM via --chat-template.
+# Required for base models whose tokenizer_config.json ships without a chat
+# template (e.g. lmsys/vicuna-13b-v1.5 — use configs/chat_templates/vicuna_v1.1.jinja).
+# Leave empty for models whose tokenizer already defines a template
+# (Llama-3.1-Instruct, Llama-2-chat, Qwen2.5-Instruct, etc.).
+CHAT_TEMPLATE="${CHAT_TEMPLATE:-}"
+
 mkdir -p logs results outputs data
 
 if ! command -v uv >/dev/null 2>&1; then
@@ -78,6 +85,16 @@ fi
 echo "Starting vLLM (shared reflection + target) for mode=${MODE}..."
 cleanup_vllm
 
+VLLM_EXTRA_ARGS=()
+if [[ -n "${CHAT_TEMPLATE}" ]]; then
+  if [[ ! -f "${CHAT_TEMPLATE}" ]]; then
+    echo "CHAT_TEMPLATE=${CHAT_TEMPLATE} not found; aborting." >&2
+    exit 1
+  fi
+  echo "Using chat template: ${CHAT_TEMPLATE}"
+  VLLM_EXTRA_ARGS+=(--chat-template "${CHAT_TEMPLATE}")
+fi
+
 uv run python -m vllm.entrypoints.openai.api_server \
   --model "${REFLECTION_MODEL}" \
   --served-model-name "${REFLECTION_MODEL}" \
@@ -85,6 +102,7 @@ uv run python -m vllm.entrypoints.openai.api_server \
   --port "${REFLECTION_PORT}" \
   --max-model-len "${REFLECTION_MAX_MODEL_LEN}" \
   --gpu-memory-utilization "${REFLECTION_GPU_UTIL}" \
+  "${VLLM_EXTRA_ARGS[@]}" \
   --enforce-eager > logs/unified_reflection_vllm.log 2>&1 &
 wait_for_port "${REFLECTION_PORT}" "vLLM"
 

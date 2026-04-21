@@ -25,6 +25,7 @@ from typing import Any
 import pandas as pd
 import seaborn as sns
 import torch
+from tqdm.auto import tqdm
 
 from src.artifacts import (
     build_baseline_optimized_df,
@@ -204,7 +205,8 @@ def evaluate_asr(
     target_latencies: list[float] = []
 
     if not use_target_pool:
-        for ex in eval_examples:
+        pbar = tqdm(eval_examples, total=n, desc="Adversary→Target (seq)", unit="ex")
+        for ex in pbar:
             sample, adv_latency_ms = adversary_output(
                 prompt=ex["prompt"],
                 attacker_instruction=attacker_instruction,
@@ -222,10 +224,12 @@ def evaluate_asr(
             adv_rows.append((ex, sample, adv_latency_ms))
             target_texts.append(target_resp)
             target_latencies.append(target_latency_ms)
+            pbar.set_postfix(adv_ms=f"{adv_latency_ms:.0f}", tgt_ms=f"{target_latency_ms:.0f}")
     else:
         pending: list[tuple[dict[str, Any], dict[str, Any], float, Future[tuple[str, float]]]] = []
         with ThreadPoolExecutor(max_workers=workers) as executor:
-            for ex in eval_examples:
+            rewrite_bar = tqdm(eval_examples, total=n, desc="Adversary rewrite", unit="ex")
+            for ex in rewrite_bar:
                 sample, adv_latency_ms = adversary_output(
                     prompt=ex["prompt"],
                     attacker_instruction=attacker_instruction,
@@ -241,12 +245,15 @@ def evaluate_asr(
                 )
                 fut = executor.submit(timed_target_generate, ctx.target_session, ctx.device, request)
                 pending.append((ex, sample, adv_latency_ms, fut))
+                rewrite_bar.set_postfix(adv_ms=f"{adv_latency_ms:.0f}")
 
-            for ex, sample, adv_latency_ms, fut in pending:
+            target_bar = tqdm(pending, total=n, desc="Target responses", unit="ex")
+            for ex, sample, adv_latency_ms, fut in target_bar:
                 adv_rows.append((ex, sample, adv_latency_ms))
                 target_resp, target_latency_ms = fut.result()
                 target_texts.append(target_resp)
                 target_latencies.append(target_latency_ms)
+                target_bar.set_postfix(tgt_ms=f"{target_latency_ms:.0f}")
 
     behaviors: list[str] = []
     generations: list[str] = []
@@ -277,11 +284,16 @@ def evaluate_asr(
             }
         )
 
+    tqdm.write(f"Judging {len(generations)} responses ({eval_cfg.method})...")
     eval_result = evaluate_outputs(
         behaviors=behaviors,
         generations=generations,
         cfg=eval_cfg,
         judge_session=ctx.judge_session if eval_cfg.method == "judge" else None,
+    )
+    tqdm.write(
+        f"  asr={eval_result.asr:.3f}  refusal_rate={eval_result.refusal_rate:.3f}  "
+        f"n={eval_result.n_samples}"
     )
     return eval_result, rows
 

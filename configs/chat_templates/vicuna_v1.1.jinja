@@ -1,0 +1,30 @@
+{#-
+    Vicuna v1.1+ chat template (matches FastChat's `vicuna_v1.1` conv template,
+    which Vicuna-13B-v1.5 was trained against). Use with vLLM / transformers
+    via `--chat-template`. Vicuna's tokenizer_config.json doesn't ship a Jinja
+    template, so this file must be passed explicitly for chat-completions API
+    calls to work.
+
+    Rendered format (FastChat sep_style = ADD_COLON_TWO, sep=" ", sep2="</s>"):
+
+        {system} USER: {u1} ASSISTANT: {a1}</s>USER: {u2} ASSISTANT:
+
+    If the caller does not supply a system message, fall back to the standard
+    Vicuna default string (same as FastChat's conv.system_message default).
+-#}
+{%- set ns = namespace(sys="A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions.") -%}
+{%- if messages[0]['role'] == 'system' -%}
+    {%- set ns.sys = messages[0]['content'] -%}
+    {%- set messages = messages[1:] -%}
+{%- endif -%}
+{{- ns.sys + ' ' -}}
+{%- for message in messages -%}
+    {%- if message['role'] == 'user' -%}
+        {{- 'USER: ' + message['content'] + ' ' -}}
+    {%- elif message['role'] == 'assistant' -%}
+        {{- 'ASSISTANT: ' + message['content'] + '</s>' -}}
+    {%- endif -%}
+{%- endfor -%}
+{%- if add_generation_prompt -%}
+    {{- 'ASSISTANT:' -}}
+{%- endif -%}

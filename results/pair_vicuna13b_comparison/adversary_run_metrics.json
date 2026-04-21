@@ -1,0 +1,33 @@
+{
+  "config": {
+    "mode": "eval",
+    "dataset_name": "walledai/HarmBench",
+    "dataset_config": "standard",
+    "dataset_split": "train",
+    "train_size": 100,
+    "val_size": 20,
+    "runtime_profile": "local_transformers",
+    "target_model_name": "lmsys/vicuna-13b-v1.5",
+    "reflection_vllm_base_url": "http://127.0.0.1:8001/v1",
+    "eval_method": "judge",
+    "iterations": 0,
+    "run_seconds": 112.23541402816772,
+    "adversary_policy": "rloo",
+    "rs_budget": 5,
+    "rs_min_successes": 0,
+    "kl_coeff": 0.0,
+    "init_adversary_checkpoint": "/home/ubuntu/prompt-optimization/seed123_checkpoints_best"
+  },
+  "baseline_metrics": {
+    "refusal_rate": 0.55,
+    "asr": 0.45,
+    "aggregate_score": 0.55,
+    "latency_ms_mean": 7904.728704550053
+  },
+  "final_metrics": {
+    "refusal_rate": 0.55,
+    "asr": 0.45,
+    "aggregate_score": 0.55,
+    "latency_ms_mean": 7904.728704550053
+  }
+}
