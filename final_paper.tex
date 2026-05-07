@@ -573,17 +573,16 @@ Thus, the current co-evolution loop is best understood as a defense-training met
 
 \subsection{RQ3: XSTest Transfer and Over-Refusal}
 
-Table~\ref{tab:xstest} reports the \xstest{} runs that are already present in the repository. 
-These are adversary-mode evaluations: each \xstest{} prompt is first rewritten by a saved adversary checkpoint, then sent to the target under the default helpful-assistant system prompt. 
-The table therefore measures two properties of the learned rewriters rather than the standalone utility cost of a GEPA defense prompt. 
-First, the safe-compliance columns test whether the adversary corrupts harmless prompts into refusals. 
-Second, the unsafe-ASR column tests whether the same rewriter transfers to \xstest{} unsafe prompts.
+Table~\ref{tab:xstest} reports both target-only and adversary-mode \xstest{} runs. 
+In target-only mode, each \xstest{} prompt is sent directly to the target under either the default helpful-assistant prompt or the evolved GEPA defense prompt. 
+In adversary mode, each \xstest{} prompt is first rewritten by a saved adversary checkpoint, then sent to the target under the default helpful-assistant system prompt. 
+The target-only rows measure the utility cost and unsafe refusal behavior of the defense prompt itself, while the adversary-mode rows measure whether learned rewriters preserve benign requests and transfer to \xstest{} unsafe prompts.
 
-The main result is that all saved adversary checkpoints preserve high safe compliance, $96.4$--$98.8\%$, with low over-refusal, $1.2$--$3.6\%$. 
-At the same time, unsafe ASR remains high, $0.775$--$0.970$, on unsafe \xstest{} prompts. 
-This suggests that the stronger prompt strategies are not merely making the target refuse everything; they mostly preserve benign requests while continuing to pressure unsafe ones. 
-However, the current artifacts do not yet support a claim that evolved GEPA defense prompts reduce over-refusal relative to the default prompt. 
-That requires the target-only and GEPA-defense \xstest{} runs listed in Appendix~\ref{sec:remaining-experiments}.
+The target-only comparison shows a clear safety--utility tradeoff. 
+The evolved GEPA defense reduces unsafe \xstest{} ASR from $0.075$ to $0.030$, but increases safe-prompt over-refusal from $0.084$ to $0.260$. 
+Thus, in its current form, the GEPA defense hardens the target but is substantially more conservative on harmless prompts. 
+By contrast, saved adversary checkpoints preserve high safe compliance, $96.4$--$98.8\%$, with low over-refusal, $1.2$--$3.6\%$, while maintaining high unsafe ASR, $0.775$--$0.970$, on unsafe \xstest{} prompts. 
+This suggests that the stronger prompt strategies are not merely making the target refuse everything; they mostly preserve benign requests while continuing to pressure unsafe ones.
 
 \begin{table}[t]
 \centering
@@ -597,6 +596,8 @@ Lower over-refusal and higher safe compliance are better; higher unsafe ASR mean
 \toprule
 Configuration & Eval mode & Safe compliance & Over-refusal & Unsafe ASR \\
 \midrule
+Default target prompt & target-only & 0.916 & 0.084 & 0.075 \\
+GEPA defense prompt & target-only & 0.740 & 0.260 & 0.030 \\
 R11 full seed & adversary & 0.984 & 0.016 & 0.775 \\
 R12 short seed + KL & adversary & 0.964 & 0.036 & 0.815 \\
 R12 full seed + KL & adversary & 0.980 & 0.020 & 0.970 \\
@@ -607,8 +608,10 @@ R14 coev, KL = 0.05 & adversary & 0.984 & 0.016 & 0.880 \\
 }
 \end{table}
 
-The unsafe-ASR column measures whether adversarial rewrites of \xstest{} unsafe prompts elicit non-refusal. 
-It is not directly comparable to safe over-refusal: high values indicate the adversary transfers to \xstest{} unsafe prompts, while the safe-compliance and over-refusal columns measure collateral damage on benign prompts.
+The unsafe-ASR column has different interpretations across modes. 
+For target-only rows, it measures direct compliance with unsafe \xstest{} prompts. 
+For adversary rows, it measures whether adversarial rewrites of \xstest{} unsafe prompts elicit non-refusal. 
+In both cases, safe-compliance and over-refusal measure collateral damage on benign prompts.
 
 \subsection{Preliminary Comparison with PAIR}
 
@@ -774,18 +777,20 @@ Vicuna-13B-v1.5 & PAIR & 0.85 & 933.72s \\
 \section{Supplementary: Remaining Experiments and Figures}
 \label{sec:remaining-experiments}
 
-The current repository supports most report claims, but three professor-requested comparisons require either a final retrieval pass or additional \xstest{} runs.
+The current repository supports most report claims, but some professor-requested comparisons require either a final retrieval pass or additional \xstest{} runs.
 
 \paragraph{Experiment A: XSTest / ``XSbench'' defense comparison.}
 The codebase has \xstest{} support, not a separate XSbench runner. 
-To measure harmless-prompt behavior cleanly, run the following four conditions on the same \xstest{} split:
+The target-only baseline and GEPA-defense conditions have now been run on the same \xstest{} split and are reported in Table~\ref{tab:xstest}. 
+The full four-condition matrix is:
 \begin{enumerate}
-    \item \textbf{Undefended target only:} run \texttt{configs/xstest\_batch\_eval.yaml}. This produces baseline safe compliance and over-refusal for \texttt{You are a helpful assistant.}
+    \item \textbf{Undefended target only:} run \texttt{configs/xstest\_batch\_eval.yaml}. This produces baseline safe compliance and over-refusal for \texttt{You are a helpful assistant.} This condition is complete.
     \item \textbf{Undefended target after adversary rewrite:} use an existing adversary-mode config such as \texttt{configs/r11\_seed123\_xstest.yaml}; this condition is already available for several checkpoints.
-    \item \textbf{GEPA defense only:} duplicate \texttt{configs/xstest\_batch\_eval.yaml}, set \texttt{runs.xstest.target\_system\_prompt} to \texttt{results/r14\_coev\_full\_prompt\_kl/optimized\_defense\_prompt.txt}, and write results to a new directory such as \texttt{results/xstest\_gepa\_defense\_target\_only}.
-    \item \textbf{Adversary plus GEPA defense:} duplicate \texttt{configs/r14\_coev\_full\_prompt\_kl\_xstest.yaml}, replace the \xstest{} target system prompt with the same optimized defense prompt, and write to \texttt{results/r14\_coev\_full\_prompt\_kl\_xstest\_gepa\_defense}.
+    \item \textbf{GEPA defense only:} duplicate \texttt{configs/xstest\_batch\_eval.yaml}, set \texttt{runs.xstest.target\_system\_prompt} to the text in \texttt{results/r14\_coev\_full\_prompt\_kl/optimized\_defense\_prompt.txt}, and write results to a new directory such as \texttt{results/xstest\_gepa\_defense\_target\_only}. This condition is complete.
+    \item \textbf{Adversary plus GEPA defense:} duplicate \texttt{configs/r14\_coev\_full\_prompt\_kl\_xstest.yaml}, replace the \xstest{} target system prompt with the same optimized defense prompt, and write to \texttt{results/r14\_coev\_full\_prompt\_kl\_xstest\_gepa\_defense}. This condition still requires the R14 co-evolution LoRA checkpoint.
 \end{enumerate}
-These runs support the final safety-utility table requested in the report notes: target baseline, adversary only, GEPA defense only, and adversary plus GEPA defense.
+These runs support the final safety-utility table requested in the report notes: target baseline, adversary only, GEPA defense only, and adversary plus GEPA defense. 
+The completed target-only rows show that the evolved defense reduces direct unsafe compliance, but at a noticeable over-refusal cost.
 
 \paragraph{Experiment B: frozen-model GEPA final push.}
 The existing R14 code already freezes the target and alternates adversary LoRA updates with dual-role GEPA prompt evolution. 
