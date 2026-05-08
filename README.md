@@ -73,11 +73,11 @@ MODE=adversary bash scripts/launch_unified_prime.sh
 
 The repository includes a lightweight Colab-ready demo notebook:
 
-- `demo.ipynb` clones the repo when opened in a blank Colab runtime, installs only `pandas` and `matplotlib`, regenerates the final figures from saved result artifacts, and displays the core safety--utility tradeoff.
-- The main demo path is CPU-only and does not require Hugging Face tokens, vLLM, or GPU model loading.
-- An optional small-model GPU inference cell is included at the end of the notebook and is disabled by default.
+- `demo.ipynb` clones the repo when opened in a blank Colab runtime, loads a small instruction model, runs a tiny LoRA adversary fine-tuning demo, and runs a GEPA-style defense prompt search on redacted examples.
+- The live demo is intentionally small: it uses `Qwen/Qwen2.5-0.5B-Instruct`, redacted request categories, a few training steps, and a lightweight refusal heuristic rather than the full HarmBench/Judge/GEPA training stack.
+- The final section regenerates the paper figures from saved result artifacts.
 
-To run locally from the repository root, open `demo.ipynb` and run all cells. To regenerate figures directly:
+To run locally from the repository root, open `demo.ipynb` and run all cells. A Colab GPU runtime is recommended for the live LoRA section. To regenerate figures directly:
 
 ```bash
 uv run python scripts/make_final_figures.py --only all
