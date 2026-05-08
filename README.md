@@ -69,6 +69,20 @@ MODE=coev_v2_rloo bash scripts/launch_unified_prime.sh
 MODE=adversary bash scripts/launch_unified_prime.sh
 ```
 
+## Submission demo
+
+The repository includes a lightweight Colab-ready demo notebook:
+
+- `demo.ipynb` clones the repo when opened in a blank Colab runtime, installs only `pandas` and `matplotlib`, regenerates the final figures from saved result artifacts, and displays the core safety--utility tradeoff.
+- The main demo path is CPU-only and does not require Hugging Face tokens, vLLM, or GPU model loading.
+- An optional small-model GPU inference cell is included at the end of the notebook and is disabled by default.
+
+To run locally from the repository root, open `demo.ipynb` and run all cells. To regenerate figures directly:
+
+```bash
+uv run python scripts/make_final_figures.py --only all
+```
+
 ## Canonical run pipeline
 
 For consistency, run scripts follow the same high-level phase order:

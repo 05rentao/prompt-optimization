@@ -20,3 +20,16 @@ __pycache__/
 outputs/
 
 unsloth_compiled_cache/
+
+# Large local artifacts and transferred checkpoints
+*.zip
+*.tar.gz
+*:Zone.Identifier
+seed123_checkpoints_best/
+r12_kl_checkpoints_best/
+ubuntu@*
+
+# Local/experimental scratch directories
+comprehendo/
+results/3.22/
+results/3.24/
