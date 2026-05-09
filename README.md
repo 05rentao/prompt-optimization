@@ -82,6 +82,63 @@ MODE=coev_v2_rloo bash scripts/launch_unified_prime.sh
 MODE=adversary bash scripts/launch_unified_prime.sh
 ```
 
+## Reproducing results
+
+The lightweight [demo.ipynb](demo.ipynb) is intended for Colab demonstration, not full paper reproduction. To reproduce the main experiment artifacts, run from the repository root with a GPU environment that can serve the configured local vLLM models. Export a Hugging Face token first; the XSTest loader and gated model downloads require it.
+
+```bash
+uv sync
+export HF_TOKEN=hf_xxx...
+```
+
+Run the main reproduction pipeline:
+
+```bash
+bash scripts/run_all_remaining.sh
+```
+
+This script runs the R15 baseline, R15 XSTest baseline, R11 adversary retraining, R11 XSTest evaluation, R14 co-evolution, and R14 XSTest evaluation. It writes logs under `logs/run_all_remaining/<timestamp>/` and artifacts under:
+
+- `results/r15_baseline/`
+- `results/r11_rloo_length_penalty/`
+- `results/r11_xstest_eval/`
+- `results/r14_coev_rloo/`
+- `results/r14_xstest_eval/`
+
+For the R12 KL-penalty ablation, run:
+
+```bash
+bash scripts/run_r12.sh
+```
+
+This writes logs under `logs/r12/<timestamp>/` and artifacts under `results/r12_rloo_kl_penalty/` and [results/r12_xstest_eval/](results/r12_xstest_eval/).
+
+For the XSTest over-refusal comparison matrix, run:
+
+```bash
+bash scripts/run_experiment_a_xstest.sh
+```
+
+This writes the target-only and adversary-rewrite XSTest outputs under `results/xstest_batch_baseline/`, [results/r11_seed123_xstest/](results/r11_seed123_xstest/), `results/xstest_gepa_defense_target_only/`, and, when the R14 KL checkpoint is available, `results/r14_coev_full_prompt_kl_xstest_gepa_defense/`.
+
+To regenerate the final paper figures from saved aggregate artifacts:
+
+```bash
+uv run python scripts/make_final_figures.py
+```
+
+The figure script writes [figures/adversary_training_trajectory.pdf](figures/adversary_training_trajectory.pdf), [figures/coev_dynamics.pdf](figures/coev_dynamics.pdf), [figures/xstest_comparison.pdf](figures/xstest_comparison.pdf), and [figures/safety_utility_pareto.pdf](figures/safety_utility_pareto.pdf), plus matching PNGs. It skips missing optional inputs where supported, but the full figure set expects the relevant result directories above plus the saved full-run artifacts referenced in [scripts/make_final_figures.py](scripts/make_final_figures.py).
+
+For one-off reproduction of a specific run, set [configs/](configs/) explicitly through `PROMPT_OPT_CONFIG_PATH` and dispatch through [scripts/launch_unified_prime.sh](scripts/launch_unified_prime.sh):
+
+```bash
+PROMPT_OPT_CONFIG_PATH=configs/r14_coev_rloo.yaml MODE=coev_v2_rloo bash scripts/launch_unified_prime.sh
+PROMPT_OPT_CONFIG_PATH=configs/r12_rloo_kl_penalty.yaml MODE=adversary bash scripts/launch_unified_prime.sh
+PROMPT_OPT_CONFIG_PATH=configs/r15_xstest_eval.yaml MODE=xstest bash scripts/launch_unified_prime.sh
+```
+
+These full runs are long GPU jobs. Approximate H100 timings documented in the launch scripts are about 30-60 minutes for XSTest passes, about 5 hours for R11/R12 adversary retraining, and about 10 hours for R14 co-evolution. Results can vary with model checkpoint availability, sampling settings, GPU/runtime versions, and seed choices in the YAML configs.
+
 ## Canonical run pipeline
 
 For consistency, run scripts follow the same high-level phase order:
