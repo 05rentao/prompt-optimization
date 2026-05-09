@@ -73,9 +73,7 @@ MODE=adversary bash scripts/launch_unified_prime.sh
 
 The repository includes a lightweight Colab-ready demo notebook:
 
-- `demo.ipynb` clones the repo when opened in a blank Colab runtime, loads a small instruction model, runs a tiny LoRA adversary fine-tuning demo, and runs a GEPA-style defense prompt search on redacted examples.
-- The live demo is intentionally small: it uses `Qwen/Qwen2.5-0.5B-Instruct`, redacted request categories, a few training steps, and a lightweight refusal heuristic rather than the full HarmBench/Judge/GEPA training stack.
-- The final section regenerates the paper figures from saved result artifacts.
+
 
 To run locally from the repository root, open `demo.ipynb` and run all cells. A Colab GPU runtime is recommended for the live LoRA section. To regenerate figures directly:
 
