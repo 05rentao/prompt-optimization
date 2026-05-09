@@ -4,6 +4,19 @@ This repository contains several experiment pipelines under `runs/` that share a
 an adversary rewrites harmful prompts, a target model responds, and evaluation tracks ASR/refusal.
 Some runs only train adversary weights, while others optimize attacker/defense prompts with GEPA.
 
+## Submission demo
+
+The repository includes a lightweight Colab-ready demo notebook: `demo.ipynb` (link: [colab](https://drive.google.com/file/d/1MMwF2ReSl52dHivvRb3DxNe3ZhAbGXGp/view?usp=sharing))
+
+Open the notebook in Colab and run cells from top to bottom. A Colab GPU runtime is recommended for the live LoRA section.
+
+This notebook is a stripped down version of our coevolutionary loop with tiny budgets: dataset prep, prompt-pool slicing, baseline eval, one policy-gradient finetune round for an adversary LoRA model, one dual-role GEPA-style prompt update, and final results.
+
+## Submission paper
+
+The repository include the final report pdf `STAT_4830_paper.pdf` for submission. The .tex file can also be found at `STAT_4830_paper.tex`.
+
+
 ## Documentation map
 
 Use these docs in this order:
@@ -67,18 +80,6 @@ MODE=gepa bash scripts/launch_unified_prime.sh
 MODE=coev_v2 bash scripts/launch_unified_prime.sh
 MODE=coev_v2_rloo bash scripts/launch_unified_prime.sh
 MODE=adversary bash scripts/launch_unified_prime.sh
-```
-
-## Submission demo
-
-The repository includes a lightweight Colab-ready demo notebook:
-
-- `notebooks/coev_v2_colab_safe_demo.ipynb`
-
-Open the notebook in Colab and run cells from top to bottom. A Colab GPU runtime is recommended for the live LoRA section. To regenerate figures directly:
-
-```bash
-uv run python scripts/make_final_figures.py --only all
 ```
 
 ## Canonical run pipeline
