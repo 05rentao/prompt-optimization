@@ -5,6 +5,8 @@ build/
 dist/
 wheels/
 *.egg-info
+.pytest_cache/
+.ipynb_checkpoints/
 
 # logs
 logs/
@@ -12,14 +14,22 @@ logs/
 # Virtual environments
 .venv
 
-# others
-experimental_code/Copy_of_basic_implementation_without_gepa (4).ipynb
+# Local env/secrets and assistant/editor state
 .env
-__pycache__/
+.claude/
+.codex/
 
+# Generated outputs and experiment artifacts
 outputs/
+results/
 
+# Model/runtime caches and local checkpoints
 unsloth_compiled_cache/
+checkpoints*/
+*_checkpoints*/
+*.safetensors
+*.pt
+*.pth
 
 # Large local artifacts and transferred checkpoints
 *.zip
@@ -31,5 +41,4 @@ ubuntu@*
 
 # Local/experimental scratch directories
 comprehendo/
-results/3.22/
-results/3.24/
+legacy_code/

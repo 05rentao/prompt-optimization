@@ -1,3 +1,0 @@
-variant,refusal_rate,asr,mean_refusal_score,aggregate_score,latency_ms_mean
-baseline,0.75,0.75,0.6,0.6,3697.8774550000253
-optimized,1.0,0.75,0.7749999999999999,0.7749999999999999,3015.2359462500726

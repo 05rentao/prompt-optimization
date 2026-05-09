@@ -31,17 +31,17 @@ Core project code and launch entrypoints:
 Documentation and project context:
 - `docs/`: user-facing guides, especially [Getting Started](docs/getting-started.md) and [Run on Prime](docs/run_on_prime_guide.md).
 - `README.md`: high-level orientation and quick command reference.
-- `notes/`: working notes, design docs, and planning material (non-critical for execution). See `notes/coev_v2_future_refactor.md` for policy-gradient modularization notes.
+- `docs/archive/`: historical branch notes and planning material kept for reference, not needed for normal execution.
 - `tests/`: small **pytest** suite (no GPU): `test_shared_generation_config.py` exercises `shared_generation` merge in `src/runtime/defaults.py`; `test_policy_gradient.py` covers `src/runtime/policy_gradient.py`. Run from repo root: `uv run python -m pytest tests/ -q`.
 - `reports/`: course/report artifacts (for example `report.md` and presentation PDF).
 
 Run outputs and experiment artifacts:
-- `results/`: structured run outputs (manifests, metrics, traces), including smoke runs.
-- `outputs/`: generated model outputs, GEPA traces, vectors, and intermediate exports.
+- `results/`: generated structured run outputs (ignored by default; keep curated summaries/figures separately).
+- `outputs/`: generated model outputs, GEPA traces, vectors, and intermediate exports (ignored by default).
 - `logs/`: runtime logs (currently mostly empty, may be populated by long runs).
 
 Legacy:
-- `legacy_code/`: older notebooks/prototypes kept for reference during migration.
+- `legacy_code/`: older notebooks/prototypes kept locally for reference, ignored for final submission.
 
 Project metadata:
 - `pyproject.toml`: Python project/dependency configuration.
@@ -73,9 +73,9 @@ MODE=adversary bash scripts/launch_unified_prime.sh
 
 The repository includes a lightweight Colab-ready demo notebook:
 
+- `notebooks/coev_v2_colab_safe_demo.ipynb`
 
-
-To run locally from the repository root, open `demo.ipynb` and run all cells. A Colab GPU runtime is recommended for the live LoRA section. To regenerate figures directly:
+Open the notebook in Colab and run cells from top to bottom. A Colab GPU runtime is recommended for the live LoRA section. To regenerate figures directly:
 
 ```bash
 uv run python scripts/make_final_figures.py --only all

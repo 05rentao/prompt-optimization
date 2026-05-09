@@ -1,2 +1,0 @@
-Final Safety Score: EvaluationResult(score=86.0, results=<list of 50 results>)%
-Baseline Score: EvaluationResult(score=86.0, results=<list of 50 results>)%
