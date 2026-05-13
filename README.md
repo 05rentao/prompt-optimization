@@ -12,10 +12,11 @@ Open the notebook in Colab and run cells from top to bottom. A Colab GPU runtime
 
 This notebook is a stripped down version of our coevolutionary loop with tiny budgets: dataset prep, prompt-pool slicing, baseline eval, one policy-gradient finetune round for an adversary LoRA model, one dual-role GEPA-style prompt update, and final results.
 
-## Submission paper
+## Submission paper + presentation
 
 The repository include the final report pdf [STAT_4830_Paper.pdf](STAT_4830_Paper.pdf) for submission. The .tex file can also be found at [STAT_4830_Paper.tex](STAT_4830_Paper.tex).
 
+The final presentation for this project is found here [STAT_4830_Presentation.pdf](STAT_4830_Presentation.pdf).
 
 ## Documentation map
 
